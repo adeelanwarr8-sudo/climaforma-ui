@@ -1,8 +1,10 @@
-"""ClimaForma v2.1 — UI-only Streamlit prototype.
+"""ClimaForma v2.2 — Increment 1 project/site selection prototype.
 
-No geospatial operations, scientific imports, data services, model calls or active
-business logic. All controls are disabled visual design references.
+No geospatial operations, scientific imports, data services, or model calls.
+Only project identity and site-selection drafts are active; analyses are disabled.
 """
+
+import html as html_std
 
 import streamlit as st
 
@@ -117,29 +119,62 @@ def site_illustration(variant: str = "base") -> str:
 </svg><div class="cf-map-label">Illustrative layout only · Not a real site, map layer, or temperature result</div></div>'''
 
 
+# Increment 1: session-local project identity and selection only. No geocoding/GIS.
+SITE_MODES = ("Showcase site", "Address lookup", "Draw site boundary")
+SHOWCASES = ("Stockholm · Södermalm", "Barcelona · Eixample", "Vienna · Neubau")
+
+
+def selected_site_summary(mode: str, showcase: str, address: str) -> tuple[str, str, str]:
+    """Pure presentation helper; does not resolve addresses or coordinates."""
+    if mode == "Showcase site":
+        return showcase, "Showcase selection · no site boundary loaded", "Selected showcase"
+    if mode == "Address lookup":
+        return (address.strip() or "No address entered"), "Address draft only · not geocoded", "Address draft"
+    return "Boundary not drawn", "Drawing tools arrive in Increment 2", "Boundary workflow"
+
+
 with st.sidebar:
     html('<div class="cf-brand">◈ ClimaForma</div><div class="cf-brandline">Climate-responsive design intelligence</div>')
-    html('<span class="cf-pill">V2.1 · INTERFACE PREVIEW</span>')
+    html('<span class="cf-pill">V2.2 · INCREMENT 1</span>')
     st.divider()
     html('<div class="cf-step">01 · Project information</div>')
-    st.selectbox("Workspace", ["New design assessment"], disabled=True)
-    st.text_input("Project name", value="Untitled climate design study", disabled=True)
+    st.text_input("Project name", value="Untitled climate design study", key="project_name", max_chars=100,
+                  help="The name is stored only in the current Streamlit session.")
+    st.caption("New design assessment · Session-local draft")
     st.divider()
     html('<div class="cf-step">02 · Site selection</div>')
-    st.selectbox("Site mode", ["Showcase site", "Address lookup", "Draw site boundary"], disabled=True)
-    st.selectbox("Showcase city", ["Stockholm · Södermalm", "Barcelona · Eixample", "Vienna · Neubau"], disabled=True)
-    st.text_input("Search address", placeholder="City, street or place", disabled=True)
+    site_mode = st.selectbox("Site mode", SITE_MODES, key="site_mode")
+    if site_mode == "Showcase site":
+        showcase_city = st.selectbox("Showcase city", SHOWCASES, key="showcase_city")
+        address_draft = ""
+        st.caption("Selecting a city does not load imagery or coordinates.")
+    elif site_mode == "Address lookup":
+        showcase_city = SHOWCASES[0]
+        address_draft = st.text_input("Address or place (draft)", key="address_draft", max_chars=180,
+                                      placeholder="City, street or place")
+        st.caption("Text entry only. No address search or geocoding yet.")
+    else:
+        showcase_city = SHOWCASES[0]
+        address_draft = ""
+        st.info("Boundary drawing is planned for Increment 2. No map geometry is created.")
     st.divider()
     html('<div class="cf-step">03 · Analysis settings</div>')
     st.slider("Analysis buffer (m)", 300, 1000, 500, 100, disabled=True)
     st.number_input("Hot surface threshold (°C)", value=43.0, disabled=True)
     st.divider()
     html('<div class="cf-step">04 · Application status</div>')
-    html('<div class="cf-quiet"><strong>Interface preview</strong><div class="cf-caption">All inputs are disabled. No data services, simulations or models are connected.</div></div>')
-    st.caption("ClimaForma v2.1 · Visual review only")
+    html('<div class="cf-quiet"><strong>Increment 1 active</strong><div class="cf-caption">Project naming and site-selection drafts work. No satellite data, maps, geocoding or scientific models are connected.</div></div>')
+    st.caption("ClimaForma v2.2 · Increment 1")
 
-html('<div class="cf-kicker">Architecture · Landscape · Climate adaptation</div><div class="cf-heading">Design cooler places with clarity.</div><div class="cf-lede">A visual workspace for exploring site conditions, shaping climate-responsive design alternatives, and reviewing comparative outcomes.</div>')
-html('<div class="cf-quiet"><strong>UI review release</strong> &nbsp; · &nbsp; Static conceptual plans &nbsp; · &nbsp; Disabled controls &nbsp; · &nbsp; No scientific engine or numerical outputs</div>')
+site_title, site_note, site_kind = selected_site_summary(site_mode, showcase_city, address_draft)
+project_label = (st.session_state.project_name.strip() or "Untitled climate design study")
+site_title_safe = html_std.escape(site_title)
+site_note_safe = html_std.escape(site_note)
+site_kind_safe = html_std.escape(site_kind)
+project_label_safe = html_std.escape(project_label)
+
+html('<div class="cf-kicker">Architecture · Landscape · Climate adaptation</div><div class="cf-heading">Design cooler places, with clarity.</div><div class="cf-lede">A visual workspace for exploring site conditions, shaping climate-responsive design alternatives, and reviewing comparative outcomes.</div>')
+html(f'<div class="cf-quiet"><strong>Project:</strong> {project_label_safe} &nbsp; · &nbsp; <strong>Site:</strong> {site_title_safe} &nbsp; · &nbsp; No geospatial or scientific analysis</div>')
 
 t1, t2, t3 = st.tabs(["01  Existing Site", "02  Design Options", "03  Compare Options"])
 
@@ -154,7 +189,7 @@ with t1:
         html('<div class="cf-toolbar"><div class="cf-minihead">Map tools · preview</div><span class="cf-chip">⌖ Zoom & pan</span><span class="cf-chip">◫ Site boundary</span><span class="cf-chip">◉ Layer opacity</span><span class="cf-chip">↗ Full view</span><div class="cf-caption">Visual references only. No live map or geospatial data are loaded.</div></div>')
         card("Surface-cover categories", '<div class="cf-legend"><i class="cf-dot" style="background:#8faba6"></i>Building</div><div class="cf-legend"><i class="cf-dot" style="background:#c6c0b2"></i>Paved surfaces</div><div class="cf-legend"><i class="cf-dot" style="background:#559a74"></i>Tree canopy</div><div class="cf-legend"><i class="cf-dot" style="background:#a8c9a2"></i>Grass / planting</div><div class="cf-legend"><i class="cf-dot" style="background:#86bfc7"></i>Water</div><div class="cf-legend"><i class="cf-dot" style="background:#cfb99c"></i>Bare soil</div><div class="cf-caption">Legend illustrates planned categories; no land-cover classification has been performed.</div>')
     with aside:
-        card("Site information", '<div class="cf-eyebrow">Selected showcase · placeholder</div><div class="cf-scenario-name">Stockholm · Södermalm</div><div class="cf-caption">No location boundary or site coordinates have been loaded.</div><div class="cf-divider"></div><div class="cf-metric-label">Site area</div><div class="cf-metric-value">—</div><div class="cf-metric-label">Analysis period</div><div class="cf-metric-value">—</div>')
+        card("Site information", f'<div class="cf-eyebrow">{site_kind_safe}</div><div class="cf-scenario-name">{site_title_safe}</div><div class="cf-caption">{site_note_safe}</div><div class="cf-divider"></div><div class="cf-metric-label">Site area</div><div class="cf-metric-value">—</div><div class="cf-metric-label">Analysis period</div><div class="cf-metric-value">—</div>')
         card("Temperature layer", '<div class="cf-muted-block"><strong>Temperature map placeholder</strong><span>Not connected to satellite observations</span></div><div class="cf-caption">Future display: temperature scale, date and source resolution.</div>')
         card("Data and quality", '<div class="cf-muted-block">Satellite sources, coverage and model status will appear here.</div>')
     html('<div class="cf-section-head"><div class="cf-subheading">Baseline indicators</div><div class="cf-caption">Proposed metric locations. No values have been calculated.</div></div>')
@@ -166,7 +201,7 @@ with t1:
 
 with t2:
     st.write("")
-    html('<div class="cf-subheading">Design Options</div><div class="cf-intro">Review the future configuration workflow for landscape, surface materials and built shade. Every input is currently disabled.</div>')
+    html('<div class="cf-subheading">Design Options</div><div class="cf-intro">Review the future configuration workflow for landscape, surface materials and built shade. Scientific and design controls are currently disabled.</div>')
     head1,head2,head3=st.columns([1.2,1.4,1])
     with head1: st.selectbox("Option being reviewed",["Option A · Green courtyard","Option B · Cool surfaces"],disabled=True)
     with head2: st.text_input("Option name",value="Option A · Green courtyard",disabled=True)
@@ -215,4 +250,4 @@ with t3:
         card("Reports and exports · planned",'<div class="cf-outputrow"><span class="cf-action">PDF report</span><span class="cf-action">PNG comparison</span><span class="cf-action">CSV results</span><span class="cf-action">Method note</span></div><div class="cf-divider"></div><div class="cf-caption">All export controls are visual placeholders.</div>')
         card("Scientific interpretation",'<div class="cf-caption">Future reports will distinguish observed satellite inputs, modelled temperature patterns, predicted intervention effects and associated uncertainty.</div>')
 
-html('<div class="cf-footer">ClimaForma v2.1 · Standalone interface preview · Disabled controls and static concepts only · Not suitable for environmental, engineering or investment decisions</div>')
+html('<div class="cf-footer">ClimaForma v2.2 · Increment 1 · Project and site drafts active; scientific controls disabled · Not suitable for environmental, engineering or investment decisions</div>')
