@@ -138,7 +138,7 @@ with st.sidebar:
     html('<div class="cf-quiet"><strong>Interface preview</strong><div class="cf-caption">All inputs are disabled. No data services, simulations or models are connected.</div></div>')
     st.caption("ClimaForma v2.1 · Visual review only")
 
-html('<div class="cf-kicker">Architecture · Landscape · Climate adaptation</div><div class="cf-heading">Design cooler places, with clarity.</div><div class="cf-lede">A visual workspace for exploring site conditions, shaping climate-responsive design alternatives, and reviewing comparative outcomes.</div>')
+html('<div class="cf-kicker">Architecture · Landscape · Climate adaptation</div><div class="cf-heading">Design cooler places with clarity.</div><div class="cf-lede">A visual workspace for exploring site conditions, shaping climate-responsive design alternatives, and reviewing comparative outcomes.</div>')
 html('<div class="cf-quiet"><strong>UI review release</strong> &nbsp; · &nbsp; Static conceptual plans &nbsp; · &nbsp; Disabled controls &nbsp; · &nbsp; No scientific engine or numerical outputs</div>')
 
 t1, t2, t3 = st.tabs(["01  Existing Site", "02  Design Options", "03  Compare Options"])
