@@ -1,33 +1,31 @@
-# ClimaForma v2.1 — Standalone UI-only Streamlit prototype
+# ClimaForma v2.2 — Increment 1: Project information and site selection
 
-## Purpose
-This is a design-review build. **No analytical functionality is connected**. It uses only Streamlit; it does not import the existing scientific engine, use satellite/GIS data, call web APIs, read files, or compute any environmental performance indicators. All input controls are disabled and the SVG site diagrams are purely illustrative.
+UI-only Streamlit application based on the approved ClimaForma v2.1 layout.
 
-## What's improved in v2.1
-- More legible system-font hierarchy, restrained spacing, larger content workspace and consistent cards.
-- Sidebar divided into Project information, Site selection, Analysis settings and Application status.
-- Existing Site: stronger map prominence, map layer presentation, clearly distinguished site metadata, data quality and baseline indicators.
-- Design Options: distinct categories for Landscape, Materials, and Built Shade; conceptual drawing workspace and option manager.
-- Compare Options: three equal-sized panels for Existing Site, Option A and Option B, followed by indicator placeholders, chart and exports.
+## Activated in Increment 1
+- Editable project name (up to 100 characters), held in Streamlit session state.
+- Site-selection modes: showcase site, address draft, and future boundary-drawing selection.
+- Three available showcase *labels*: Stockholm / Södermalm, Barcelona / Eixample, Vienna / Neubau.
+- Address entry is a text draft only; it is not geocoded or searched.
+- Existing Site information panel reflects the selected label, with HTML escaping for safe rendering.
 
-## Deploy to Streamlit Community Cloud
-1. Create/choose a GitHub repository. Upload `app.py`, `requirements.txt`, `.streamlit/`, `tests/`, and this README to the repository root.
-2. Set main branch `main` and main file path `app.py`.
-3. Deploy and visually review all three tabs. No secrets or service credentials are required.
+## Explicitly NOT active
+No maps, geocoding, boundary drawing, file upload, satellite retrieval, land-cover processing,
+thermal prediction, scientific model, design interventions, comparison calculation, or export.
+All remaining analytical controls stay disabled and the three original tabs are retained.
+Project and site selections are session-local and are not saved across browser sessions.
 
-## Test
-```bash
-python -m pip install -r requirements.txt
-streamlit run app.py
-python -m pip install pytest
-python -m pytest -q tests
-```
+## Deployment to the existing repository
+Replace `app.py` and `README.md` at the repository root. `requirements.txt` remains
+`streamlit>=1.38,<2`. Keep `.streamlit/config.toml` as supplied. Commit to `main`.
+Streamlit Cloud should redeploy automatically; verify the new version label in the sidebar.
 
-## Acceptance review
-- Inspect desktop and narrower browser widths.
-- Check the sidebar doesn't obstruct the principal map or comparison panels.
-- Check each of three tabs renders and text remains readable.
-- Confirm controls are visibly disabled, charts/maps are static, and no external analytical requests are made.
+## Smoke test
+1. Load app. Confirm all three tabs render.
+2. Change project name; confirm header project summary updates.
+3. Change showcase city; confirm site information changes but map remains static.
+4. Select Address lookup; type a location; confirm it is labelled a draft and no lookup occurs.
+5. Select Draw site boundary; verify informative placeholder and no geometry.
+6. Navigate tabs; confirm all analysis, drawing, cost and export functions remain disabled.
 
-## Status
-Source-level tests and Python syntax checks pass. Actual Streamlit browser rendering has **not** been tested in the packaging environment. Final visual approval occurs after GitHub/Streamlit deployment.
+Run source tests with `python -m pytest -q tests` (pytest not required on Streamlit Cloud).
