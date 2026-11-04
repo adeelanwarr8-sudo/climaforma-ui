@@ -1,12 +1,17 @@
-"""ClimaForma v2.2 — Increment 1 project/site selection prototype.
+"""ClimaForma v2.3 — Increment 2 interactive site mapping.
 
-No geospatial operations, scientific imports, data services, or model calls.
-Only project identity and site-selection drafts are active; analyses are disabled.
+Project selection, map navigation and single site-boundary geometry are active.
+Satellite imagery analysis, science engine and intervention functions remain disabled.
 """
 
 import html as html_std
 
 import streamlit as st
+import folium
+from folium.plugins import Draw, Fullscreen, MousePosition
+from streamlit_folium import st_folium
+from site_mapping import (BoundaryInfo, SHOWCASE_CENTERS, DEFAULT_CENTER,
+                          boundary_from_drawings, same_boundary)
 
 st.set_page_config(
     page_title="ClimaForma | Climate-Responsive Design",
@@ -127,15 +132,15 @@ SHOWCASES = ("Stockholm · Södermalm", "Barcelona · Eixample", "Vienna · Neub
 def selected_site_summary(mode: str, showcase: str, address: str) -> tuple[str, str, str]:
     """Pure presentation helper; does not resolve addresses or coordinates."""
     if mode == "Showcase site":
-        return showcase, "Showcase selection · no site boundary loaded", "Selected showcase"
+        return showcase, "Showcase location · site boundary is defined by your drawing", "Selected showcase"
     if mode == "Address lookup":
         return (address.strip() or "No address entered"), "Address draft only · not geocoded", "Address draft"
-    return "Boundary not drawn", "Drawing tools arrive in Increment 2", "Boundary workflow"
+    return "Boundary not drawn", "Draw or edit the boundary directly on the map", "Boundary workflow"
 
 
 with st.sidebar:
     html('<div class="cf-brand">◈ ClimaForma</div><div class="cf-brandline">Climate-responsive design intelligence</div>')
-    html('<span class="cf-pill">V2.2 · INCREMENT 1</span>')
+    html('<span class="cf-pill">V2.3 · INCREMENT 2</span>')
     st.divider()
     html('<div class="cf-step">01 · Project information</div>')
     st.text_input("Project name", value="Untitled climate design study", key="project_name", max_chars=100,
@@ -156,15 +161,52 @@ with st.sidebar:
     else:
         showcase_city = SHOWCASES[0]
         address_draft = ""
-        st.info("Boundary drawing is planned for Increment 2. No map geometry is created.")
+        st.info("Go to Existing Site → draw one polygon or rectangle on the map. Use the edit/delete toolbar to adjust it.")
     st.divider()
     html('<div class="cf-step">03 · Analysis settings</div>')
     st.slider("Analysis buffer (m)", 300, 1000, 500, 100, disabled=True)
     st.number_input("Hot surface threshold (°C)", value=43.0, disabled=True)
     st.divider()
     html('<div class="cf-step">04 · Application status</div>')
-    html('<div class="cf-quiet"><strong>Increment 1 active</strong><div class="cf-caption">Project naming and site-selection drafts work. No satellite data, maps, geocoding or scientific models are connected.</div></div>')
-    st.caption("ClimaForma v2.2 · Increment 1")
+    html('<div class="cf-quiet"><strong>Increment 2 active</strong><div class="cf-caption">Interactive mapping and site boundaries are available. Address lookup, satellite processing and scientific models remain disconnected.</div></div>')
+    st.caption("ClimaForma v2.3 · Increment 2")
+
+# A changed showcase/location mode resets the site boundary so it cannot be
+# accidentally attributed to another city. Address entry is NOT geocoded.
+map_context = (site_mode, showcase_city if site_mode == "Showcase site" else None)
+if st.session_state.get("map_context") != map_context:
+    st.session_state["map_context"] = map_context
+    st.session_state["boundary_info"] = None
+    st.session_state["map_generation"] = st.session_state.get("map_generation", 0) + 1
+
+map_center = SHOWCASE_CENTERS.get(showcase_city, DEFAULT_CENTER) if site_mode == "Showcase site" else DEFAULT_CENTER
+
+
+def build_site_map(center: tuple[float, float, int], boundary: BoundaryInfo | None) -> folium.Map:
+    """Make a navigation/drawing map. No basemap data are used in calculations."""
+    latitude, longitude, zoom = center
+    m = folium.Map(location=[latitude, longitude], zoom_start=zoom, tiles=None, control_scale=True)
+    folium.TileLayer(tiles="OpenStreetMap", name="Street map", show=True).add_to(m)
+    folium.TileLayer(
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        name="Aerial imagery", attr="Tiles © Esri and contributors", show=False,
+    ).add_to(m)
+    if boundary is not None:
+        folium.GeoJson(
+            {"type": "Feature", "geometry": boundary.geometry, "properties": {}},
+            name="Saved boundary (reference)",
+            style_function=lambda _feature: {"color": "#087c6e", "weight": 2, "fillOpacity": 0.08, "dashArray": "5 4"},
+        ).add_to(m)
+    Draw(
+        export=False, position="topleft",
+        draw_options={"polyline": False, "circle": False, "circlemarker": False,
+                      "marker": False, "polygon": {"allowIntersection": False}, "rectangle": True},
+        edit_options={"edit": True, "remove": True},
+    ).add_to(m)
+    Fullscreen(position="topright").add_to(m)
+    MousePosition(position="bottomleft", separator=" / ", prefix="Lat/Lon:", num_digits=5).add_to(m)
+    folium.LayerControl(collapsed=True).add_to(m)
+    return m
 
 site_title, site_note, site_kind = selected_site_summary(site_mode, showcase_city, address_draft)
 project_label = (st.session_state.project_name.strip() or "Untitled climate design study")
@@ -174,7 +216,7 @@ site_kind_safe = html_std.escape(site_kind)
 project_label_safe = html_std.escape(project_label)
 
 html('<div class="cf-kicker">Architecture · Landscape · Climate adaptation</div><div class="cf-heading">Design cooler places, with clarity.</div><div class="cf-lede">A visual workspace for exploring site conditions, shaping climate-responsive design alternatives, and reviewing comparative outcomes.</div>')
-html(f'<div class="cf-quiet"><strong>Project:</strong> {project_label_safe} &nbsp; · &nbsp; <strong>Site:</strong> {site_title_safe} &nbsp; · &nbsp; No geospatial or scientific analysis</div>')
+html(f'<div class="cf-quiet"><strong>Project:</strong> {project_label_safe} &nbsp; · &nbsp; <strong>Site:</strong> {site_title_safe} &nbsp; · &nbsp; Interactive site mapping only · No environmental analysis</div>')
 
 t1, t2, t3 = st.tabs(["01  Existing Site", "02  Design Options", "03  Compare Options"])
 
@@ -184,12 +226,54 @@ with t1:
     main, aside = st.columns([2.15, 1], gap="large")
     with main:
         html('<div class="cf-eyebrow">Site workspace</div>')
-        html('<div class="cf-viewbar"><span class="cf-view cf-view-active">Concept plan</span><span class="cf-view">Street map</span><span class="cf-view">Aerial imagery</span><span class="cf-view">Surface temperature</span><span class="cf-view">Land cover</span></div>')
-        html(site_illustration())
-        html('<div class="cf-toolbar"><div class="cf-minihead">Map tools · preview</div><span class="cf-chip">⌖ Zoom & pan</span><span class="cf-chip">◫ Site boundary</span><span class="cf-chip">◉ Layer opacity</span><span class="cf-chip">↗ Full view</span><div class="cf-caption">Visual references only. No live map or geospatial data are loaded.</div></div>')
+        html('<div class="cf-quiet"><strong>Interactive mapping enabled</strong> · Draw one polygon or rectangle using the map toolbar. Use its edit/delete tools to revise the drawing. Basemaps are for visual reference only.</div>')
+        # Use a stable component key across ordinary Streamlit reruns so Leaflet
+        # retains the user's unsaved drawing edits. A new site context resets it.
+        current_boundary = st.session_state.get("boundary_info")
+        map_result = st_folium(
+            build_site_map(map_center, current_boundary),
+            height=510, width=None,
+            key=f"site_map_{st.session_state['map_generation']}",
+            returned_objects=["all_drawings", "last_active_drawing"],
+            use_container_width=True,
+        )
+        drawings = map_result.get("all_drawings") if isinstance(map_result, dict) else None
+        if drawings is not None:
+            try:
+                observed = boundary_from_drawings(drawings)
+                # A draw feature group can be empty on initial rendering even
+                # when a stored reference overlay exists; Clear Site is the
+                # authoritative reset button in that case.
+                if observed is not None and not same_boundary(observed, st.session_state.get("boundary_info")):
+                    st.session_state["boundary_info"] = observed
+                elif drawings == [] and st.session_state.get("boundary_info") is not None:
+                    st.caption("The drawing layer is empty. Select Clear boundary to remove the saved site reference.")
+            except (ValueError, TypeError, KeyError) as error:
+                st.warning(f"Boundary not accepted: {error}")
+        controls, status = st.columns([1, 2])
+        with controls:
+            if st.button("Clear boundary", key="clear_site_boundary", use_container_width=True):
+                st.session_state["boundary_info"] = None
+                st.session_state["map_generation"] += 1
+                st.rerun()
+        with status:
+            st.caption("Map layer selector: top-right. Draw: top-left. Editing uses Leaflet Draw controls. One site boundary per project.")
+        html('<div class="cf-toolbar"><div class="cf-minihead">Map tools · active</div><span class="cf-chip">Zoom / pan</span><span class="cf-chip">Draw polygon / rectangle</span><span class="cf-chip">Edit / delete</span><span class="cf-chip">Street / aerial basemap</span><div class="cf-caption">Coordinates are WGS84 (EPSG:4326); areas are WGS84 geodesic measurements. No temperature or land-cover analysis.</div></div>')
         card("Surface-cover categories", '<div class="cf-legend"><i class="cf-dot" style="background:#8faba6"></i>Building</div><div class="cf-legend"><i class="cf-dot" style="background:#c6c0b2"></i>Paved surfaces</div><div class="cf-legend"><i class="cf-dot" style="background:#559a74"></i>Tree canopy</div><div class="cf-legend"><i class="cf-dot" style="background:#a8c9a2"></i>Grass / planting</div><div class="cf-legend"><i class="cf-dot" style="background:#86bfc7"></i>Water</div><div class="cf-legend"><i class="cf-dot" style="background:#cfb99c"></i>Bare soil</div><div class="cf-caption">Legend illustrates planned categories; no land-cover classification has been performed.</div>')
     with aside:
-        card("Site information", f'<div class="cf-eyebrow">{site_kind_safe}</div><div class="cf-scenario-name">{site_title_safe}</div><div class="cf-caption">{site_note_safe}</div><div class="cf-divider"></div><div class="cf-metric-label">Site area</div><div class="cf-metric-value">—</div><div class="cf-metric-label">Analysis period</div><div class="cf-metric-value">—</div>')
+        boundary = st.session_state.get("boundary_info")
+        if boundary is not None:
+            area_text = f"{boundary.area_m2:,.1f} m² ({boundary.area_m2 / 10_000:,.3f} ha)"
+            geometry_details = (
+                f'<div class="cf-metric-label">Site perimeter</div><div class="cf-note">{boundary.perimeter_m:,.1f} m</div>'
+                f'<div class="cf-metric-label">Centroid · WGS84</div><div class="cf-note">'
+                f'{boundary.latitude:.6f}, {boundary.longitude:.6f}</div>'
+                f'<div class="cf-metric-label">Boundary vertices</div><div class="cf-note">{boundary.vertex_count}</div>'
+            )
+        else:
+            area_text = "—"
+            geometry_details = '<div class="cf-caption">Draw one boundary in the map workspace to display area and coordinates.</div>'
+        card("Site information", f'<div class="cf-eyebrow">{site_kind_safe}</div><div class="cf-scenario-name">{site_title_safe}</div><div class="cf-caption">{site_note_safe}</div><div class="cf-divider"></div><div class="cf-metric-label">Site area</div><div class="cf-metric-value">{area_text}</div>{geometry_details}<div class="cf-divider"></div><div class="cf-metric-label">Analysis period</div><div class="cf-metric-value">—</div>')
         card("Temperature layer", '<div class="cf-muted-block"><strong>Temperature map placeholder</strong><span>Not connected to satellite observations</span></div><div class="cf-caption">Future display: temperature scale, date and source resolution.</div>')
         card("Data and quality", '<div class="cf-muted-block">Satellite sources, coverage and model status will appear here.</div>')
     html('<div class="cf-section-head"><div class="cf-subheading">Baseline indicators</div><div class="cf-caption">Proposed metric locations. No values have been calculated.</div></div>')
@@ -250,4 +334,4 @@ with t3:
         card("Reports and exports · planned",'<div class="cf-outputrow"><span class="cf-action">PDF report</span><span class="cf-action">PNG comparison</span><span class="cf-action">CSV results</span><span class="cf-action">Method note</span></div><div class="cf-divider"></div><div class="cf-caption">All export controls are visual placeholders.</div>')
         card("Scientific interpretation",'<div class="cf-caption">Future reports will distinguish observed satellite inputs, modelled temperature patterns, predicted intervention effects and associated uncertainty.</div>')
 
-html('<div class="cf-footer">ClimaForma v2.2 · Increment 1 · Project and site drafts active; scientific controls disabled · Not suitable for environmental, engineering or investment decisions</div>')
+html('<div class="cf-footer">ClimaForma v2.3 · Increment 2 · Project and site drafts active; scientific controls disabled · Not suitable for environmental, engineering or investment decisions</div>')
