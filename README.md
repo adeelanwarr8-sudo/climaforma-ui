@@ -1,31 +1,52 @@
-# ClimaForma v2.2 — Increment 1: Project information and site selection
+# ClimaForma v2.3 — Increment 2: Interactive Mapping and Site Boundaries
 
-UI-only Streamlit application based on the approved ClimaForma v2.1 layout.
+This release builds on the approved Streamlit v2.2 interface and activates **only** site mapping and geometry, retaining the three-tab layout.
 
-## Activated in Increment 1
-- Editable project name (up to 100 characters), held in Streamlit session state.
-- Site-selection modes: showcase site, address draft, and future boundary-drawing selection.
-- Three available showcase *labels*: Stockholm / Södermalm, Barcelona / Eixample, Vienna / Neubau.
-- Address entry is a text draft only; it is not geocoded or searched.
-- Existing Site information panel reflects the selected label, with HTML escaping for safe rendering.
+## Active features
 
-## Explicitly NOT active
-No maps, geocoding, boundary drawing, file upload, satellite retrieval, land-cover processing,
-thermal prediction, scientific model, design interventions, comparison calculation, or export.
-All remaining analytical controls stay disabled and the three original tabs are retained.
-Project and site selections are session-local and are not saved across browser sessions.
+- Project name and site-mode selection from v2.2.
+- OpenStreetMap street layer and Esri aerial imagery layer with a Leaflet layer selector.
+- Showcase navigation to Södermalm (Stockholm), Eixample (Barcelona), and Neubau (Vienna).
+- Zoom/pan and fullscreen map controls, live coordinate readout.
+- Single polygon or rectangle drawing, Leaflet edit/delete toolbar, **Clear boundary** button.
+- WGS84 geodesic site area (m² and ha), perimeter, centroid and vertex count.
+- Boundary validation: valid polygons only, 1 m²–25 km², one boundary at a time.
+- Site boundaries kept in the Streamlit session; switching site mode or showcase clears them.
 
-## Deployment to the existing repository
-Replace `app.py` and `README.md` at the repository root. `requirements.txt` remains
-`streamlit>=1.38,<2`. Keep `.streamlit/config.toml` as supplied. Commit to `main`.
-Streamlit Cloud should redeploy automatically; verify the new version label in the sidebar.
+## Not implemented yet
 
-## Smoke test
-1. Load app. Confirm all three tabs render.
-2. Change project name; confirm header project summary updates.
-3. Change showcase city; confirm site information changes but map remains static.
-4. Select Address lookup; type a location; confirm it is labelled a draft and no lookup occurs.
-5. Select Draw site boundary; verify informative placeholder and no geometry.
-6. Navigate tabs; confirm all analysis, drawing, cost and export functions remain disabled.
+- Address lookup/geocoding: typed addresses remain drafts; in Address mode the map starts in Stockholm and can be panned manually.
+- Satellite imagery analysis, land cover, temperature predictions, design interventions, exports and scientific engine.
+- Drawn shape editing is provided by Leaflet Draw. Drawn boundaries are **not** editable through the Design Options tab. The stored reference polygon is displayed in green dashed styling; use the drawing tool to adjust the live drawing or **Clear boundary** to reset. If an edit leaves multiple shapes, delete extras until one remains.
+- Aerial tiles may be subject to provider availability and usage conditions; map tiles are for orientation, not analysis.
 
-Run source tests with `python -m pytest -q tests` (pytest not required on Streamlit Cloud).
+## Deploy to existing GitHub/Streamlit app
+
+1. Extract ZIP. Upload or replace **app.py**, **site_mapping.py**, **requirements.txt**, and **README.md** in the repository root. Also upload `.streamlit/config.toml` if not present.
+2. Keep the Streamlit entrypoint as `app.py` and branch `main`. No need for a new repository/app.
+3. Streamlit Cloud installs the requirements and redeploys automatically.
+4. Observe dependency logs and the app. If it fails, send the error message rather than replacing the repository.
+
+## Browser acceptance test
+
+1. Confirm the three existing tabs and sidebar remain intact.
+2. Select each of the three showcase cities and confirm the map moves to that location.
+3. Change between street and aerial basemaps via the map's top-right layer selector.
+4. Zoom, pan and use fullscreen; hover/click to read coordinates.
+5. Draw a single rectangle in Existing Site. The site-information card should show an area greater than zero in **m² and ha**, perimeter and coordinates.
+6. Edit the drawing using the Leaflet edit toolbar and check the area changes. Test a polygon too.
+7. Try drawing two polygons: only one is accepted. Delete extras on the map.
+8. Click **Clear boundary**: the saved site, map drawing and area must reset.
+9. Enter address mode, type an address, and verify **no automatic geocoding** occurs.
+10. Check that Design Options and Compare Options still have no analytical functionality.
+
+## Verification performed in build environment
+
+- `python -m pytest -q` → 26 tests passed.
+- `python -m py_compile app.py site_mapping.py` → success.
+- ZIP integrity check → success.
+- **Not verified here:** Actual Streamlit runtime, web browser drawing/editing persistence, remote basemap tiles, and Streamlit Community Cloud deployment. Streamlit could not be installed because the build environment cannot access the package index. Browser acceptance is mandatory.
+
+### Safety and scope
+
+Mapping is for early design **site delineation** only. Area and perimeter values come from geodesic WGS84 geometry, not from satellite imagery or environmental modelling. No site geometry is saved to a server database or uploaded to an external analysis service by this application. Remote basemap providers do receive ordinary tile requests from a user's browser.
