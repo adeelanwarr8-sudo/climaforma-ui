@@ -1,4 +1,4 @@
-"""ClimaForma v2.3 — Increment 2 interactive site mapping.
+"""ClimaForma v2.3.1 — Increment 2 boundary delete/edit patch.
 
 Project selection, map navigation and single site-boundary geometry are active.
 Satellite imagery analysis, science engine and intervention functions remain disabled.
@@ -140,7 +140,7 @@ def selected_site_summary(mode: str, showcase: str, address: str) -> tuple[str, 
 
 with st.sidebar:
     html('<div class="cf-brand">◈ ClimaForma</div><div class="cf-brandline">Climate-responsive design intelligence</div>')
-    html('<span class="cf-pill">V2.3 · INCREMENT 2</span>')
+    html('<span class="cf-pill">V2.3.1 · INCREMENT 2</span>')
     st.divider()
     html('<div class="cf-step">01 · Project information</div>')
     st.text_input("Project name", value="Untitled climate design study", key="project_name", max_chars=100,
@@ -169,7 +169,7 @@ with st.sidebar:
     st.divider()
     html('<div class="cf-step">04 · Application status</div>')
     html('<div class="cf-quiet"><strong>Increment 2 active</strong><div class="cf-caption">Interactive mapping and site boundaries are available. Address lookup, satellite processing and scientific models remain disconnected.</div></div>')
-    st.caption("ClimaForma v2.3 · Increment 2")
+    st.caption("ClimaForma v2.3.1 · Increment 2")
 
 # A changed showcase/location mode resets the site boundary so it cannot be
 # accidentally attributed to another city. Address entry is NOT geocoded.
@@ -177,6 +177,7 @@ map_context = (site_mode, showcase_city if site_mode == "Showcase site" else Non
 if st.session_state.get("map_context") != map_context:
     st.session_state["map_context"] = map_context
     st.session_state["boundary_info"] = None
+    st.session_state["map_drawings_seen"] = False
     st.session_state["map_generation"] = st.session_state.get("map_generation", 0) + 1
 
 map_center = SHOWCASE_CENTERS.get(showcase_city, DEFAULT_CENTER) if site_mode == "Showcase site" else DEFAULT_CENTER
@@ -191,14 +192,27 @@ def build_site_map(center: tuple[float, float, int], boundary: BoundaryInfo | No
         tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
         name="Aerial imagery", attr="Tiles © Esri and contributors", show=False,
     ).add_to(m)
+    # IMPORTANT: preloaded/saved geometry MUST belong to the same editable
+    # FeatureGroup used by Leaflet Draw. A separate folium.GeoJson overlay
+    # is not controlled by the toolbar's Edit/Delete actions.
+    editable = folium.FeatureGroup(name="Editable site boundary", show=True)
+    editable.add_to(m)
     if boundary is not None:
-        folium.GeoJson(
-            {"type": "Feature", "geometry": boundary.geometry, "properties": {}},
-            name="Saved boundary (reference)",
-            style_function=lambda _feature: {"color": "#087c6e", "weight": 2, "fillOpacity": 0.08, "dashArray": "5 4"},
-        ).add_to(m)
+        # Folium Polygon generates an editable L.Polygon rather than the
+        # L.GeoJSON container that Leaflet Draw cannot reliably edit.
+        rings = boundary.geometry["coordinates"]
+        latlon_rings = [
+            [(float(lat), float(lon)) for lon, lat in ring]
+            for ring in rings
+        ]
+        locations = latlon_rings[0] if len(latlon_rings) == 1 else latlon_rings
+        folium.Polygon(
+            locations=locations, color="#087c6e", weight=2,
+            fill=True, fill_opacity=0.12, dash_array="5 4",
+        ).add_to(editable)
     Draw(
-        export=False, position="topleft",
+        feature_group=editable,
+        export=False, position="topleft", show_geometry_on_click=False,
         draw_options={"polyline": False, "circle": False, "circlemarker": False,
                       "marker": False, "polygon": {"allowIntersection": False}, "rectangle": True},
         edit_options={"edit": True, "remove": True},
@@ -241,19 +255,25 @@ with t1:
         if drawings is not None:
             try:
                 observed = boundary_from_drawings(drawings)
-                # A draw feature group can be empty on initial rendering even
-                # when a stored reference overlay exists; Clear Site is the
-                # authoritative reset button in that case.
-                if observed is not None and not same_boundary(observed, st.session_state.get("boundary_info")):
-                    st.session_state["boundary_info"] = observed
-                elif drawings == [] and st.session_state.get("boundary_info") is not None:
-                    st.caption("The drawing layer is empty. Select Clear boundary to remove the saved site reference.")
+                if observed is not None:
+                    st.session_state["map_drawings_seen"] = True
+                    if not same_boundary(observed, st.session_state.get("boundary_info")):
+                        st.session_state["boundary_info"] = observed
+                elif drawings == [] and st.session_state.get("map_drawings_seen", False):
+                    # Unlike the old implementation, an actual map-delete
+                    # event clears the saved geometry and all site metrics.
+                    # A new component generation removes any stale drawing.
+                    st.session_state["boundary_info"] = None
+                    st.session_state["map_drawings_seen"] = False
+                    st.session_state["map_generation"] += 1
+                    st.rerun()
             except (ValueError, TypeError, KeyError) as error:
                 st.warning(f"Boundary not accepted: {error}")
         controls, status = st.columns([1, 2])
         with controls:
             if st.button("Clear boundary", key="clear_site_boundary", use_container_width=True):
                 st.session_state["boundary_info"] = None
+                st.session_state["map_drawings_seen"] = False
                 st.session_state["map_generation"] += 1
                 st.rerun()
         with status:
@@ -334,4 +354,4 @@ with t3:
         card("Reports and exports · planned",'<div class="cf-outputrow"><span class="cf-action">PDF report</span><span class="cf-action">PNG comparison</span><span class="cf-action">CSV results</span><span class="cf-action">Method note</span></div><div class="cf-divider"></div><div class="cf-caption">All export controls are visual placeholders.</div>')
         card("Scientific interpretation",'<div class="cf-caption">Future reports will distinguish observed satellite inputs, modelled temperature patterns, predicted intervention effects and associated uncertainty.</div>')
 
-html('<div class="cf-footer">ClimaForma v2.3 · Increment 2 · Project and site drafts active; scientific controls disabled · Not suitable for environmental, engineering or investment decisions</div>')
+html('<div class="cf-footer">ClimaForma v2.3.1 · Increment 2 · Project and site drafts active; scientific controls disabled · Not suitable for environmental, engineering or investment decisions</div>')
