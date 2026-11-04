@@ -20,7 +20,15 @@ MAX_UPLOAD_BYTES = 2_000_000
 MAX_UPLOAD_FEATURES = 1500
 MAX_OSM_BBOX_KM2 = 2.5
 MAX_OSM_FEATURES = 2500
-OVERPASS_URL = 'https://overpass.kumi.systems/api/interpreter'
+# Public endpoints can return 429/502/503 or time out; use documented alternatives.
+# Private.coffee is the current endpoint of the former overpass.kumi.systems service.
+OVERPASS_ENDPOINTS = (
+    'https://overpass.private.coffee/api/interpreter',
+    'https://ovp.dresel.systems/api/interpreter',  # Europe coverage; daily updates
+    'https://overpass-api.de/api/interpreter',
+)
+OVERPASS_URL = OVERPASS_ENDPOINTS[0]  # Compatibility alias
+
 
 
 @dataclass(frozen=True)
@@ -166,12 +174,47 @@ def process_overpass_result(data: dict, boundary_geom: dict) -> VectorData:
 
 
 def fetch_osm_buildings(boundary_geom: dict, bounds: tuple[float, float, float, float]) -> VectorData:
+    """Fetch on demand; try independent Overpass instances, without losing site state.
+
+    No external request is made if the bounding box or geometry is invalid.
+    An HTTP 200 response must also contain a valid Overpass JSON object.
+    """
     query = overpass_query(bounds)
-    try:
-        response = requests.post(OVERPASS_URL, data={'data': query}, timeout=(8, 30),
-                                 headers={'User-Agent': 'ClimaFormaPrototype/0.3 (research demonstration)'})
-        response.raise_for_status()
-        payload = response.json()
-    except (requests.RequestException, ValueError) as exc:
-        raise ValueError('OSM building service is unavailable or returned invalid data. Try later.') from exc
-    return process_overpass_result(payload, boundary_geom)
+    if _valid_polygon(boundary_geom) is None:
+        raise ValueError('Select a valid site boundary first.')
+    failures: list[str] = []
+    for url in OVERPASS_ENDPOINTS:
+        host = url.split('/')[2]
+        try:
+            response = requests.post(
+                url, data={'data': query}, timeout=(6, 18),
+                headers={'User-Agent': 'ClimaFormaPrototype/0.4 (geospatial research demo)',
+                         'Accept': 'application/json'},
+            )
+            response.raise_for_status()
+            if 'json' not in response.headers.get('Content-Type', '').lower():
+                # Some Overpass configurations may omit content-type for JSON.
+                if not response.text.lstrip().startswith('{'):
+                    raise ValueError('non-JSON response')
+            payload = response.json()
+            result = process_overpass_result(payload, boundary_geom)
+            return VectorData(
+                name=result.name, features=result.features,
+                source=f'OpenStreetMap via {host}', acquired_utc=result.acquired_utc,
+                checked=result.checked, kept=result.kept, rejected=result.rejected,
+                notes=result.notes + (f'Endpoint: {host}',),
+            )
+        except requests.Timeout:
+            failures.append(f'{host}: timeout')
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else 'unknown'
+            failures.append(f'{host}: HTTP {status}')
+        except requests.RequestException:
+            failures.append(f'{host}: connection error')
+        except (ValueError, TypeError, KeyError):
+            failures.append(f'{host}: invalid response')
+    raise ValueError(
+        'OSM building retrieval failed across available public services. '
+        + ' | '.join(failures)
+        + '. You can retry later or upload building polygons as EPSG:4326 GeoJSON.'
+    )
