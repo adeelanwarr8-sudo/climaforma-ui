@@ -1,4 +1,4 @@
-"""ClimaForma v2.3.1 — Increment 2 boundary delete/edit patch.
+"""ClimaForma v2.4 — Increment 3: bounded vector data acquisition.
 
 Project selection, map navigation and single site-boundary geometry are active.
 Satellite imagery analysis, science engine and intervention functions remain disabled.
@@ -11,7 +11,8 @@ import folium
 from folium.plugins import Draw, Fullscreen, MousePosition
 from streamlit_folium import st_folium
 from site_mapping import (BoundaryInfo, SHOWCASE_CENTERS, DEFAULT_CENTER,
-                          boundary_from_drawings, same_boundary)
+                          boundary_from_drawings, same_boundary, replacement_candidate, boundary_preview_svg)
+from geo_data import fetch_osm_buildings, process_geojson_bytes
 
 st.set_page_config(
     page_title="ClimaForma | Climate-Responsive Design",
@@ -140,7 +141,7 @@ def selected_site_summary(mode: str, showcase: str, address: str) -> tuple[str, 
 
 with st.sidebar:
     html('<div class="cf-brand">◈ ClimaForma</div><div class="cf-brandline">Climate-responsive design intelligence</div>')
-    html('<span class="cf-pill">V2.3.1 · INCREMENT 2</span>')
+    html('<span class="cf-pill">V2.4.1 · INCREMENT 3</span>')
     st.divider()
     html('<div class="cf-step">01 · Project information</div>')
     st.text_input("Project name", value="Untitled climate design study", key="project_name", max_chars=100,
@@ -168,8 +169,8 @@ with st.sidebar:
     st.number_input("Hot surface threshold (°C)", value=43.0, disabled=True)
     st.divider()
     html('<div class="cf-step">04 · Application status</div>')
-    html('<div class="cf-quiet"><strong>Increment 2 active</strong><div class="cf-caption">Interactive mapping and site boundaries are available. Address lookup, satellite processing and scientific models remain disconnected.</div></div>')
-    st.caption("ClimaForma v2.3.1 · Increment 2")
+    html('<div class="cf-quiet"><strong>Increment 3 active</strong><div class="cf-caption">Site drawing and optional polygon-layer acquisition are available. Satellite processing and scientific models remain disconnected.</div></div>')
+    st.caption("ClimaForma v2.4.1 · Increment 3")
 
 # A changed showcase/location mode resets the site boundary so it cannot be
 # accidentally attributed to another city. Address entry is NOT geocoded.
@@ -177,7 +178,9 @@ map_context = (site_mode, showcase_city if site_mode == "Showcase site" else Non
 if st.session_state.get("map_context") != map_context:
     st.session_state["map_context"] = map_context
     st.session_state["boundary_info"] = None
+    st.session_state["vector_layer"] = None
     st.session_state["map_drawings_seen"] = False
+    st.session_state["pending_boundary"] = None
     st.session_state["map_generation"] = st.session_state.get("map_generation", 0) + 1
 
 map_center = SHOWCASE_CENTERS.get(showcase_city, DEFAULT_CENTER) if site_mode == "Showcase site" else DEFAULT_CENTER
@@ -219,6 +222,11 @@ def build_site_map(center: tuple[float, float, int], boundary: BoundaryInfo | No
     ).add_to(m)
     Fullscreen(position="topright").add_to(m)
     MousePosition(position="bottomleft", separator=" / ", prefix="Lat/Lon:", num_digits=5).add_to(m)
+    layer = st.session_state.get("vector_layer")
+    if layer is not None and layer.features:
+        folium.GeoJson(layer.feature_collection, name=layer.name,
+                       style_function=lambda _: {"color": "#9a653c", "fillColor": "#ce9c67",
+                                                  "weight": 1.4, "fillOpacity": 0.25}).add_to(m)
     folium.LayerControl(collapsed=True).add_to(m)
     return m
 
@@ -252,33 +260,104 @@ with t1:
             use_container_width=True,
         )
         drawings = map_result.get("all_drawings") if isinstance(map_result, dict) else None
-        if drawings is not None:
+        # A second draw is treated as a *proposal*, not an immediate change.
+        # The existing boundary (and context layer) remain authoritative until
+        # the user explicitly confirms replacing it.
+        if drawings is not None and st.session_state.get("pending_boundary") is None:
             try:
-                observed = boundary_from_drawings(drawings)
-                if observed is not None:
-                    st.session_state["map_drawings_seen"] = True
-                    if not same_boundary(observed, st.session_state.get("boundary_info")):
-                        st.session_state["boundary_info"] = observed
-                elif drawings == [] and st.session_state.get("map_drawings_seen", False):
-                    # Unlike the old implementation, an actual map-delete
-                    # event clears the saved geometry and all site metrics.
-                    # A new component generation removes any stale drawing.
-                    st.session_state["boundary_info"] = None
-                    st.session_state["map_drawings_seen"] = False
-                    st.session_state["map_generation"] += 1
-                    st.rerun()
+                if isinstance(drawings, list) and len(drawings) == 2:
+                    candidate = replacement_candidate(drawings, st.session_state.get("boundary_info"))
+                    if candidate is not None:
+                        st.session_state["pending_boundary"] = candidate
+                else:
+                    observed = boundary_from_drawings(drawings)
+                    if observed is not None:
+                        st.session_state["map_drawings_seen"] = True
+                        if not same_boundary(observed, st.session_state.get("boundary_info")):
+                            # Editing a *single* existing shape is committed at once.
+                            # A second shape always requires confirmation.
+                            st.session_state["boundary_info"] = observed
+                            st.session_state["vector_layer"] = None
+                    elif drawings == [] and st.session_state.get("map_drawings_seen", False):
+                        # Leaflet delete/save: remove geometry and measurements.
+                        st.session_state["boundary_info"] = None
+                        st.session_state["vector_layer"] = None
+                        st.session_state["pending_boundary"] = None
+                        st.session_state["map_drawings_seen"] = False
+                        st.session_state["map_generation"] += 1
+                        st.rerun()
             except (ValueError, TypeError, KeyError) as error:
                 st.warning(f"Boundary not accepted: {error}")
+        pending = st.session_state.get("pending_boundary")
+        if pending is not None:
+            st.warning("A second site shape was drawn. Only one active boundary is allowed. "
+                       "Confirm replacement or cancel; the original site is unchanged until confirmed.")
+            st.caption(f"Proposed replacement: {pending.area_m2:,.1f} m² "
+                       f"({pending.area_m2/10_000:,.3f} ha)")
+            confirm_col, cancel_col = st.columns(2)
+            with confirm_col:
+                if st.button("Replace existing boundary", type="primary", key="confirm_boundary_replace",
+                             use_container_width=True):
+                    st.session_state["boundary_info"] = pending
+                    st.session_state["pending_boundary"] = None
+                    st.session_state["vector_layer"] = None
+                    st.session_state["map_drawings_seen"] = True
+                    st.session_state["map_generation"] += 1
+                    st.rerun()
+            with cancel_col:
+                if st.button("Keep existing boundary", key="cancel_boundary_replace",
+                             use_container_width=True):
+                    st.session_state["pending_boundary"] = None
+                    st.session_state["map_generation"] += 1
+                    st.rerun()
         controls, status = st.columns([1, 2])
         with controls:
             if st.button("Clear boundary", key="clear_site_boundary", use_container_width=True):
                 st.session_state["boundary_info"] = None
+                st.session_state["vector_layer"] = None
+                st.session_state["pending_boundary"] = None
                 st.session_state["map_drawings_seen"] = False
                 st.session_state["map_generation"] += 1
                 st.rerun()
         with status:
-            st.caption("Map layer selector: top-right. Draw: top-left. Editing uses Leaflet Draw controls. One site boundary per project.")
+            st.caption("Map layer selector: top-right. Draw: top-left. Editing uses Leaflet Draw controls. One active site boundary per project; draw a second to propose replacement.")
         html('<div class="cf-toolbar"><div class="cf-minihead">Map tools · active</div><span class="cf-chip">Zoom / pan</span><span class="cf-chip">Draw polygon / rectangle</span><span class="cf-chip">Edit / delete</span><span class="cf-chip">Street / aerial basemap</span><div class="cf-caption">Coordinates are WGS84 (EPSG:4326); areas are WGS84 geodesic measurements. No temperature or land-cover analysis.</div></div>')
+        html('<div class="cf-section-head"><div class="cf-subheading">Vector context data · Increment 3</div><div class="cf-caption">Only explicit user requests load geospatial layers. Imported layers are not land-cover classifications.</div></div>')
+        current_site = st.session_state.get("boundary_info")
+        if current_site is None:
+            st.info("Draw a site boundary before requesting or uploading vector data.")
+        else:
+            vleft, vright = st.columns([1, 1], gap="medium")
+            with vleft:
+                upload = st.file_uploader("Upload polygon GeoJSON (EPSG:4326)", type=["geojson", "json"],
+                                          key="vector_upload", help="Up to 2 MB and 1,500 polygons; clipped to your site.")
+                if st.button("Validate uploaded GeoJSON", disabled=upload is None,
+                             use_container_width=True, key="validate_vector"):
+                    try:
+                        st.session_state["vector_layer"] = process_geojson_bytes(upload.getvalue(), current_site.geometry)
+                        st.rerun()
+                    except ValueError as exc:
+                        st.error(str(exc))
+            with vright:
+                st.caption("OpenStreetMap building footprints (optional)")
+                if st.button("Fetch OSM buildings for site", use_container_width=True, key="fetch_osm"):
+                    try:
+                        with st.spinner("Requesting OSM buildings…"):
+                            st.session_state["vector_layer"] = fetch_osm_buildings(current_site.geometry, current_site.bounds)
+                        st.rerun()
+                    except ValueError as exc:
+                        st.error(str(exc))
+            layer = st.session_state.get("vector_layer")
+            if layer is not None:
+                st.write(f"**{layer.name}:** {layer.kept} features inside site; "
+                         f"{layer.checked} checked; {layer.rejected} rejected.")
+                st.caption(f"Source: {layer.source} · Retrieved/processed: {layer.acquired_utc} · "
+                           + "; ".join(layer.notes))
+                if st.button("Remove context layer", key="clear_vector", use_container_width=False):
+                    st.session_state["vector_layer"] = None
+                    st.rerun()
+                st.caption("Use the layer selector to show or hide context features. "
+                           "The site boundary remains independent of this context layer.")
         card("Surface-cover categories", '<div class="cf-legend"><i class="cf-dot" style="background:#8faba6"></i>Building</div><div class="cf-legend"><i class="cf-dot" style="background:#c6c0b2"></i>Paved surfaces</div><div class="cf-legend"><i class="cf-dot" style="background:#559a74"></i>Tree canopy</div><div class="cf-legend"><i class="cf-dot" style="background:#a8c9a2"></i>Grass / planting</div><div class="cf-legend"><i class="cf-dot" style="background:#86bfc7"></i>Water</div><div class="cf-legend"><i class="cf-dot" style="background:#cfb99c"></i>Bare soil</div><div class="cf-caption">Legend illustrates planned categories; no land-cover classification has been performed.</div>')
     with aside:
         boundary = st.session_state.get("boundary_info")
@@ -327,6 +406,9 @@ with t2:
         st.slider("Cool roof treatment (% of roof)",0,100,0,disabled=True)
     with right:
         html('<div class="cf-eyebrow">Design canvas</div><div class="cf-intro">Option A · Green courtyard — conceptual layout only</div>')
+        card("Selected site · shared boundary", boundary_preview_svg(st.session_state.get("boundary_info")) +
+             '<div class="cf-caption">This is the selected site geometry from Existing Site. '
+             'Design interventions remain illustrative and disabled.</div>')
         html(site_illustration("green"))
         card("Sketch tools · planned", '<div class="cf-viewbar"><span class="cf-view">Tree canopy</span><span class="cf-view">Planting polygon</span><span class="cf-view">Cool paving</span><span class="cf-view">Water</span><span class="cf-view">Shade</span><span class="cf-view">Erase</span></div><div class="cf-muted-block">Future map drawing and DXF / GeoJSON import workspace<br><strong>No drawing, upload or editing is enabled</strong></div>')
         card("Design summary · illustrative", '<div class="cf-bar-row"><div class="cf-bar-name">Tree canopy</div><div class="cf-bar-track"><div class="cf-bar-fill" style="width:62%"></div></div></div><div class="cf-bar-row"><div class="cf-bar-name">Vegetation</div><div class="cf-bar-track"><div class="cf-bar-fill" style="width:48%"></div></div></div><div class="cf-bar-row"><div class="cf-bar-name">Cool materials</div><div class="cf-bar-track"><div class="cf-bar-fill" style="width:35%"></div></div></div><div class="cf-caption">Decorative bars. Not intervention quantities or calculated results.</div>')
@@ -336,6 +418,9 @@ with t3:
     st.write("")
     html('<div class="cf-subheading">Compare Options</div><div class="cf-intro">Review a consistent existing-versus-design comparison, followed by evaluation metrics and reporting controls.</div>')
     html('<div class="cf-viewbar"><span class="cf-view cf-view-active">Existing site</span><span class="cf-view">Option A · Green courtyard</span><span class="cf-view">Option B · Cool surfaces</span></div>')
+    card("Project site · shared across all tabs", boundary_preview_svg(st.session_state.get("boundary_info")) +
+         '<div class="cf-caption">The same active site boundary is retained here. '
+         'Scenario diagrams below are conceptual placeholders, not maps of this geometry.</div>')
     p1,p2,p3=st.columns(3,gap="medium")
     with p1: card("Existing Site · Baseline",site_illustration("base")+'<div class="cf-caption">Conceptual reference — no observed thermal raster</div>')
     with p2: card("Option A · Green courtyard",site_illustration("green")+'<div class="cf-caption">Illustrative vegetation intervention</div>')
@@ -354,4 +439,4 @@ with t3:
         card("Reports and exports · planned",'<div class="cf-outputrow"><span class="cf-action">PDF report</span><span class="cf-action">PNG comparison</span><span class="cf-action">CSV results</span><span class="cf-action">Method note</span></div><div class="cf-divider"></div><div class="cf-caption">All export controls are visual placeholders.</div>')
         card("Scientific interpretation",'<div class="cf-caption">Future reports will distinguish observed satellite inputs, modelled temperature patterns, predicted intervention effects and associated uncertainty.</div>')
 
-html('<div class="cf-footer">ClimaForma v2.3.1 · Increment 2 · Project and site drafts active; scientific controls disabled · Not suitable for environmental, engineering or investment decisions</div>')
+html('<div class="cf-footer">ClimaForma v2.4.1 · Increment 3 · Project and site drafts active; scientific controls disabled · Not suitable for environmental, engineering or investment decisions</div>')

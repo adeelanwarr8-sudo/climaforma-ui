@@ -88,3 +88,49 @@ def same_boundary(left: BoundaryInfo | None, right: BoundaryInfo | None) -> bool
     if left is None or right is None:
         return left is right
     return left.geometry == right.geometry
+
+
+
+def replacement_candidate(drawings: object, active: BoundaryInfo | None) -> BoundaryInfo | None:
+    """Identify a newly drawn second boundary, without committing it.
+
+    A separate explicit confirmation in the UI is required before replacing the
+    existing site. Two shapes are only allowed transiently in the editor.
+    """
+    if not isinstance(drawings, list) or len(drawings) != 2 or active is None:
+        return None
+    candidates = [parse_boundary(item) for item in drawings]
+    # Drawing toolbar appends new layers; select the shape that is different
+    # from the current saved site. If both differ (concurrent edit), use last.
+    differing = [item for item in candidates if not same_boundary(item, active)]
+    return differing[-1] if differing else None
+
+
+def boundary_preview_svg(boundary: BoundaryInfo | None) -> str:
+    """Return a static SVG of the *actual selected geometry*, never a basemap.
+
+    The map is illustrative and has no environmental layers; only geometric
+    outline is projected into a local pixel viewport for tab continuity.
+    """
+    if boundary is None:
+        return ('<div class="cf-muted-block">No active site boundary · '
+                'Draw one in the Existing Site tab.</div>')
+    ring = boundary.geometry['coordinates'][0]
+    latitude_radians = math.radians(boundary.latitude)
+    xs = [float(lon)*max(0.01, math.cos(latitude_radians)) for lon,lat in ring]
+    ys = [float(lat) for lon,lat in ring]
+    minx,maxx,miny,maxy = min(xs),max(xs),min(ys),max(ys)
+    scale = min(420/max(maxx-minx,1e-11), 164/max(maxy-miny,1e-11))
+    cx,cy = (minx+maxx)/2,(miny+maxy)/2
+    pts = ' '.join(f'{260+(x-cx)*scale:.2f},{113-(y-cy)*scale:.2f}' for x,y in zip(xs,ys))
+    return (f'<div class="cf-map-wrap"><svg viewBox="0 0 520 226" width="100%" '
+            f'role="img" aria-label="Selected site boundary schematic">'
+            f'<rect width="520" height="226" fill="#edf4f0"/>'
+            f'<path d="M0 56H520 M0 113H520 M0 170H520 M130 0V226 M260 0V226 M390 0V226" '
+            f'stroke="#d8e6de" stroke-width="1"/>'
+            f'<polygon points="{pts}" fill="#a4d3be" fill-opacity=".55" '
+            f'stroke="#087c6e" stroke-width="3"/>'
+            f'<text x="18" y="25" font-size="13" fill="#336b60" '
+            f'font-family="sans-serif">ACTIVE SITE BOUNDARY</text></svg>'
+            f'<div class="cf-map-label">Selected geometry · {boundary.area_m2:,.1f} m² · '
+            f'{boundary.perimeter_m:,.1f} m perimeter · Schematic only, not a basemap</div></div>')
