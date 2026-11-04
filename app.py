@@ -11,7 +11,7 @@ import folium
 from folium.plugins import Draw, Fullscreen, MousePosition
 from streamlit_folium import st_folium
 from site_mapping import (BoundaryInfo, SHOWCASE_CENTERS, DEFAULT_CENTER,
-                          boundary_from_drawings, same_boundary, replacement_candidate, boundary_preview_svg)
+                          boundary_from_drawings, same_boundary, boundary_preview_svg)
 from geo_data import fetch_osm_buildings, process_geojson_bytes
 
 st.set_page_config(
@@ -141,7 +141,7 @@ def selected_site_summary(mode: str, showcase: str, address: str) -> tuple[str, 
 
 with st.sidebar:
     html('<div class="cf-brand">◈ ClimaForma</div><div class="cf-brandline">Climate-responsive design intelligence</div>')
-    html('<span class="cf-pill">V2.4.1 · INCREMENT 3</span>')
+    html('<span class="cf-pill">V2.4.2 · INCREMENT 3</span>')
     st.divider()
     html('<div class="cf-step">01 · Project information</div>')
     st.text_input("Project name", value="Untitled climate design study", key="project_name", max_chars=100,
@@ -170,7 +170,7 @@ with st.sidebar:
     st.divider()
     html('<div class="cf-step">04 · Application status</div>')
     html('<div class="cf-quiet"><strong>Increment 3 active</strong><div class="cf-caption">Site drawing and optional polygon-layer acquisition are available. Satellite processing and scientific models remain disconnected.</div></div>')
-    st.caption("ClimaForma v2.4.1 · Increment 3")
+    st.caption("ClimaForma v2.4.2 · Increment 3")
 
 # A changed showcase/location mode resets the site boundary so it cannot be
 # accidentally attributed to another city. Address entry is NOT geocoded.
@@ -180,7 +180,6 @@ if st.session_state.get("map_context") != map_context:
     st.session_state["boundary_info"] = None
     st.session_state["vector_layer"] = None
     st.session_state["map_drawings_seen"] = False
-    st.session_state["pending_boundary"] = None
     st.session_state["map_generation"] = st.session_state.get("map_generation", 0) + 1
 
 map_center = SHOWCASE_CENTERS.get(showcase_city, DEFAULT_CENTER) if site_mode == "Showcase site" else DEFAULT_CENTER
@@ -213,11 +212,16 @@ def build_site_map(center: tuple[float, float, int], boundary: BoundaryInfo | No
             locations=locations, color="#087c6e", weight=2,
             fill=True, fill_opacity=0.12, dash_array="5 4",
         ).add_to(editable)
+    # Once a site exists, disable NEW geometry creation. Editing and deleting
+    # the existing editable polygon remain enabled. To redraw, clear it first.
+    allow_new_boundary = boundary is None
     Draw(
         feature_group=editable,
         export=False, position="topleft", show_geometry_on_click=False,
         draw_options={"polyline": False, "circle": False, "circlemarker": False,
-                      "marker": False, "polygon": {"allowIntersection": False}, "rectangle": True},
+                      "marker": False,
+                      "polygon": {"allowIntersection": False} if allow_new_boundary else False,
+                      "rectangle": True if allow_new_boundary else False},
         edit_options={"edit": True, "remove": True},
     ).add_to(m)
     Fullscreen(position="topright").add_to(m)
@@ -248,7 +252,7 @@ with t1:
     main, aside = st.columns([2.15, 1], gap="large")
     with main:
         html('<div class="cf-eyebrow">Site workspace</div>')
-        html('<div class="cf-quiet"><strong>Interactive mapping enabled</strong> · Draw one polygon or rectangle using the map toolbar. Use its edit/delete tools to revise the drawing. Basemaps are for visual reference only.</div>')
+        html('<div class="cf-quiet"><strong>Interactive mapping enabled</strong> · Draw one polygon or rectangle. Then edit or delete it; use Clear boundary before drawing a different site. Basemaps are for visual reference only.</div>')
         # Use a stable component key across ordinary Streamlit reruns so Leaflet
         # retains the user's unsaved drawing edits. A new site context resets it.
         current_boundary = st.session_state.get("boundary_info")
@@ -260,67 +264,42 @@ with t1:
             use_container_width=True,
         )
         drawings = map_result.get("all_drawings") if isinstance(map_result, dict) else None
-        # A second draw is treated as a *proposal*, not an immediate change.
-        # The existing boundary (and context layer) remain authoritative until
-        # the user explicitly confirms replacing it.
-        if drawings is not None and st.session_state.get("pending_boundary") is None:
+        # Single-site rule: the toolbar disables new drawing once the first
+        # polygon is accepted. Editing or deleting the existing site is allowed.
+        if drawings is not None:
             try:
-                if isinstance(drawings, list) and len(drawings) == 2:
-                    candidate = replacement_candidate(drawings, st.session_state.get("boundary_info"))
-                    if candidate is not None:
-                        st.session_state["pending_boundary"] = candidate
-                else:
-                    observed = boundary_from_drawings(drawings)
-                    if observed is not None:
-                        st.session_state["map_drawings_seen"] = True
-                        if not same_boundary(observed, st.session_state.get("boundary_info")):
-                            # Editing a *single* existing shape is committed at once.
-                            # A second shape always requires confirmation.
-                            st.session_state["boundary_info"] = observed
-                            st.session_state["vector_layer"] = None
-                    elif drawings == [] and st.session_state.get("map_drawings_seen", False):
-                        # Leaflet delete/save: remove geometry and measurements.
-                        st.session_state["boundary_info"] = None
+                observed = boundary_from_drawings(drawings)
+                if observed is not None:
+                    st.session_state["map_drawings_seen"] = True
+                    if not same_boundary(observed, st.session_state.get("boundary_info")):
+                        new_site = st.session_state.get("boundary_info") is None
+                        st.session_state["boundary_info"] = observed
                         st.session_state["vector_layer"] = None
-                        st.session_state["pending_boundary"] = None
-                        st.session_state["map_drawings_seen"] = False
-                        st.session_state["map_generation"] += 1
-                        st.rerun()
+                        if new_site:
+                            # Remount once to remove polygon/rectangle creation
+                            # controls; edit and delete remain available.
+                            st.session_state["map_drawings_seen"] = False
+                            st.session_state["map_generation"] += 1
+                            st.rerun()
+                elif drawings == [] and st.session_state.get("map_drawings_seen", False):
+                    # User used the Leaflet delete toolbar and clicked Save.
+                    st.session_state["boundary_info"] = None
+                    st.session_state["vector_layer"] = None
+                    st.session_state["map_drawings_seen"] = False
+                    st.session_state["map_generation"] += 1
+                    st.rerun()
             except (ValueError, TypeError, KeyError) as error:
                 st.warning(f"Boundary not accepted: {error}")
-        pending = st.session_state.get("pending_boundary")
-        if pending is not None:
-            st.warning("A second site shape was drawn. Only one active boundary is allowed. "
-                       "Confirm replacement or cancel; the original site is unchanged until confirmed.")
-            st.caption(f"Proposed replacement: {pending.area_m2:,.1f} m² "
-                       f"({pending.area_m2/10_000:,.3f} ha)")
-            confirm_col, cancel_col = st.columns(2)
-            with confirm_col:
-                if st.button("Replace existing boundary", type="primary", key="confirm_boundary_replace",
-                             use_container_width=True):
-                    st.session_state["boundary_info"] = pending
-                    st.session_state["pending_boundary"] = None
-                    st.session_state["vector_layer"] = None
-                    st.session_state["map_drawings_seen"] = True
-                    st.session_state["map_generation"] += 1
-                    st.rerun()
-            with cancel_col:
-                if st.button("Keep existing boundary", key="cancel_boundary_replace",
-                             use_container_width=True):
-                    st.session_state["pending_boundary"] = None
-                    st.session_state["map_generation"] += 1
-                    st.rerun()
         controls, status = st.columns([1, 2])
         with controls:
             if st.button("Clear boundary", key="clear_site_boundary", use_container_width=True):
                 st.session_state["boundary_info"] = None
                 st.session_state["vector_layer"] = None
-                st.session_state["pending_boundary"] = None
                 st.session_state["map_drawings_seen"] = False
                 st.session_state["map_generation"] += 1
                 st.rerun()
         with status:
-            st.caption("Map layer selector: top-right. Draw: top-left. Editing uses Leaflet Draw controls. One active site boundary per project; draw a second to propose replacement.")
+            st.caption("Map layer selector: top-right. Draw: top-left. Editing uses Leaflet Draw controls. One active site boundary per project. To draw another, clear the current one first.")
         html('<div class="cf-toolbar"><div class="cf-minihead">Map tools · active</div><span class="cf-chip">Zoom / pan</span><span class="cf-chip">Draw polygon / rectangle</span><span class="cf-chip">Edit / delete</span><span class="cf-chip">Street / aerial basemap</span><div class="cf-caption">Coordinates are WGS84 (EPSG:4326); areas are WGS84 geodesic measurements. No temperature or land-cover analysis.</div></div>')
         html('<div class="cf-section-head"><div class="cf-subheading">Vector context data · Increment 3</div><div class="cf-caption">Only explicit user requests load geospatial layers. Imported layers are not land-cover classifications.</div></div>')
         current_site = st.session_state.get("boundary_info")
@@ -439,4 +418,4 @@ with t3:
         card("Reports and exports · planned",'<div class="cf-outputrow"><span class="cf-action">PDF report</span><span class="cf-action">PNG comparison</span><span class="cf-action">CSV results</span><span class="cf-action">Method note</span></div><div class="cf-divider"></div><div class="cf-caption">All export controls are visual placeholders.</div>')
         card("Scientific interpretation",'<div class="cf-caption">Future reports will distinguish observed satellite inputs, modelled temperature patterns, predicted intervention effects and associated uncertainty.</div>')
 
-html('<div class="cf-footer">ClimaForma v2.4.1 · Increment 3 · Project and site drafts active; scientific controls disabled · Not suitable for environmental, engineering or investment decisions</div>')
+html('<div class="cf-footer">ClimaForma v2.4.2 · Increment 3 · Project and site drafts active; scientific controls disabled · Not suitable for environmental, engineering or investment decisions</div>')

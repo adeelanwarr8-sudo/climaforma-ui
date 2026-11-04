@@ -91,21 +91,6 @@ def same_boundary(left: BoundaryInfo | None, right: BoundaryInfo | None) -> bool
 
 
 
-def replacement_candidate(drawings: object, active: BoundaryInfo | None) -> BoundaryInfo | None:
-    """Identify a newly drawn second boundary, without committing it.
-
-    A separate explicit confirmation in the UI is required before replacing the
-    existing site. Two shapes are only allowed transiently in the editor.
-    """
-    if not isinstance(drawings, list) or len(drawings) != 2 or active is None:
-        return None
-    candidates = [parse_boundary(item) for item in drawings]
-    # Drawing toolbar appends new layers; select the shape that is different
-    # from the current saved site. If both differ (concurrent edit), use last.
-    differing = [item for item in candidates if not same_boundary(item, active)]
-    return differing[-1] if differing else None
-
-
 def boundary_preview_svg(boundary: BoundaryInfo | None) -> str:
     """Return a static SVG of the *actual selected geometry*, never a basemap.
 
