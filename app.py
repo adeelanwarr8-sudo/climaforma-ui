@@ -13,6 +13,9 @@ from streamlit_folium import st_folium
 from site_mapping import (BoundaryInfo, SHOWCASE_CENTERS, DEFAULT_CENTER,
                           boundary_from_drawings, same_boundary, boundary_preview_svg)
 from geo_data import fetch_osm_buildings, process_geojson_bytes
+from address_lookup import search_addresses
+from buffer_geometry import (create_analysis_buffer, BUFFER_MIN_M, BUFFER_MAX_M,
+                             BUFFER_DEFAULT_M, BUFFER_STEP_M)
 
 st.set_page_config(
     page_title="ClimaForma | Climate-Responsive Design",
@@ -131,17 +134,17 @@ SHOWCASES = ("Stockholm · Södermalm", "Barcelona · Eixample", "Vienna · Neub
 
 
 def selected_site_summary(mode: str, showcase: str, address: str) -> tuple[str, str, str]:
-    """Pure presentation helper; does not resolve addresses or coordinates."""
+    """Present the selected location and site information."""
     if mode == "Showcase site":
         return showcase, "Showcase location · site boundary is defined by your drawing", "Selected showcase"
     if mode == "Address lookup":
-        return (address.strip() or "No address entered"), "Address draft only · not geocoded", "Address draft"
+        return (address.strip() or "No address selected"), "Address location is a navigation reference; draw the site boundary separately", "Address location"
     return "Boundary not drawn", "Draw or edit the boundary directly on the map", "Boundary workflow"
 
 
 with st.sidebar:
     html('<div class="cf-brand">◈ ClimaForma</div><div class="cf-brandline">Climate-responsive design intelligence</div>')
-    html('<span class="cf-pill">V2.4.2 · INCREMENT 3</span>')
+    html('<span class="cf-pill">V2.4.6 · SITE SELECTION</span>')
     st.divider()
     html('<div class="cf-step">01 · Project information</div>')
     st.text_input("Project name", value="Untitled climate design study", key="project_name", max_chars=100,
@@ -156,21 +159,50 @@ with st.sidebar:
         st.caption("Selecting a city does not load imagery or coordinates.")
     elif site_mode == "Address lookup":
         showcase_city = SHOWCASES[0]
-        address_draft = st.text_input("Address or place (draft)", key="address_draft", max_chars=180,
-                                      placeholder="City, street or place")
-        st.caption("Text entry only. No address search or geocoding yet.")
+        address_draft = st.text_input("Address or place", key="address_draft", max_chars=180,
+                                      placeholder="Street, city, country")
+        if st.button("Search address", key="search_address", use_container_width=True):
+            try:
+                with st.spinner("Looking up address…"):
+                    matches = search_addresses(address_draft)
+                st.session_state["address_matches"] = matches
+                st.session_state["address_match_query"] = address_draft.strip()
+                if not matches:
+                    st.warning("No matching address found. Try a more specific location.")
+            except ValueError as exc:
+                st.error(str(exc))
+            except Exception:
+                st.error("Address service is temporarily unavailable. Please retry later or use map navigation.")
+        matches = (st.session_state.get("address_matches", [])
+                   if st.session_state.get("address_match_query") == address_draft.strip() else [])
+        if matches:
+            selected = st.selectbox("Matching locations", options=range(len(matches)),
+                                    format_func=lambda i: matches[i]["label"], key="address_match_index")
+            if st.button("Go to selected location", key="navigate_to_address", use_container_width=True,
+                         disabled=st.session_state.get("boundary_info") is not None):
+                point = matches[selected]
+                st.session_state["address_location"] = point
+                st.session_state["map_generation"] = st.session_state.get("map_generation", 0) + 1
+                st.rerun()
+            if st.session_state.get("boundary_info") is not None:
+                st.caption("Clear the current site boundary before navigating to another address.")
+        st.caption("Search only when clicked · © OpenStreetMap contributors · Location is not a property boundary.")
     else:
         showcase_city = SHOWCASES[0]
         address_draft = ""
         st.info("Go to Existing Site → draw one polygon or rectangle on the map. Use the edit/delete toolbar to adjust it.")
     st.divider()
     html('<div class="cf-step">03 · Analysis settings</div>')
-    st.slider("Analysis buffer (m)", 300, 1000, 500, 100, disabled=True)
+    analysis_buffer_m = st.slider("Analysis buffer (m)", min_value=BUFFER_MIN_M,
+                                  max_value=BUFFER_MAX_M, value=BUFFER_DEFAULT_M,
+                                  step=BUFFER_STEP_M, key="analysis_buffer_m",
+                                  help="Automatic context buffer around the selected site; does not change site area.")
+    st.caption("0 m = site only · 100 m default · 300 m maximum. Not a predicted cooling distance.")
     st.number_input("Hot surface threshold (°C)", value=43.0, disabled=True)
     st.divider()
     html('<div class="cf-step">04 · Application status</div>')
     html('<div class="cf-quiet"><strong>Increment 3 active</strong><div class="cf-caption">Site drawing and optional polygon-layer acquisition are available. Satellite processing and scientific models remain disconnected.</div></div>')
-    st.caption("ClimaForma v2.4.2 · Increment 3")
+    st.caption("ClimaForma v2.4.6 · Address lookup and spatial buffer")
 
 # A changed showcase/location mode resets the site boundary so it cannot be
 # accidentally attributed to another city. Address entry is NOT geocoded.
@@ -181,8 +213,24 @@ if st.session_state.get("map_context") != map_context:
     st.session_state["vector_layer"] = None
     st.session_state["map_drawings_seen"] = False
     st.session_state["map_generation"] = st.session_state.get("map_generation", 0) + 1
+    st.session_state["address_location"] = None
+    st.session_state["address_matches"] = []
+    st.session_state["address_match_query"] = None
 
-map_center = SHOWCASE_CENTERS.get(showcase_city, DEFAULT_CENTER) if site_mode == "Showcase site" else DEFAULT_CENTER
+# Changing the slider rebuilds the visible map while preserving the site
+# boundary and any existing context dataset.
+if st.session_state.get("buffer_displayed_m") != analysis_buffer_m:
+    st.session_state["buffer_displayed_m"] = analysis_buffer_m
+    st.session_state["map_generation"] = st.session_state.get("map_generation", 0) + 1
+
+map_center = (SHOWCASE_CENTERS.get(showcase_city, DEFAULT_CENTER)
+              if site_mode == "Showcase site" else
+              (st.session_state["address_location"]["lat"],
+               st.session_state["address_location"]["lon"], 17)
+              if site_mode == "Address lookup" and st.session_state.get("address_location")
+              else DEFAULT_CENTER)
+if site_mode == "Address lookup" and st.session_state.get("address_location"):
+    address_draft = st.session_state["address_location"]["label"]
 
 
 def build_site_map(center: tuple[float, float, int], boundary: BoundaryInfo | None) -> folium.Map:
@@ -190,10 +238,26 @@ def build_site_map(center: tuple[float, float, int], boundary: BoundaryInfo | No
     latitude, longitude, zoom = center
     m = folium.Map(location=[latitude, longitude], zoom_start=zoom, tiles=None, control_scale=True)
     folium.TileLayer(tiles="OpenStreetMap", name="Street map", show=True).add_to(m)
+    if site_mode == "Address lookup" and st.session_state.get("address_location"):
+        loc = st.session_state["address_location"]
+        folium.Marker([loc["lat"], loc["lon"]],
+                      tooltip="Address search result (not a site boundary)",
+                      icon=folium.Icon(color="blue", icon="info-sign")).add_to(m)
     folium.TileLayer(
         tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
         name="Aerial imagery", attr="Tiles © Esri and contributors", show=False,
     ).add_to(m)
+    # Analysis buffer is a derived, read-only context layer. It must NOT be
+    # placed in Leaflet Draw's editable boundary group.
+    if boundary is not None and analysis_buffer_m > 0:
+        context = create_analysis_buffer(boundary.geometry, analysis_buffer_m)
+        if context is not None:
+            folium.GeoJson(
+                context.geometry, name=f"Analysis buffer · {analysis_buffer_m} m",
+                style_function=lambda _: {"color": "#4787b5", "weight": 2,
+                                          "fillColor": "#75b4db", "fillOpacity": 0.07,
+                                          "dashArray": "6 5"},
+            ).add_to(m)
     # IMPORTANT: preloaded/saved geometry MUST belong to the same editable
     # FeatureGroup used by Leaflet Draw. A separate folium.GeoJson overlay
     # is not controlled by the toolbar's Edit/Delete actions.
@@ -300,6 +364,10 @@ with t1:
                 st.rerun()
         with status:
             st.caption("Map layer selector: top-right. Draw: top-left. Editing uses Leaflet Draw controls. One active site boundary per project. To draw another, clear the current one first.")
+        if st.session_state.get("boundary_info") is not None:
+            st.caption(f"Analysis context: {analysis_buffer_m} m around the active site. "
+                       "Toggle the blue dashed buffer in the map layer selector; "
+                       "site area and perimeter remain unchanged.")
         html('<div class="cf-toolbar"><div class="cf-minihead">Map tools · active</div><span class="cf-chip">Zoom / pan</span><span class="cf-chip">Draw polygon / rectangle</span><span class="cf-chip">Edit / delete</span><span class="cf-chip">Street / aerial basemap</span><div class="cf-caption">Coordinates are WGS84 (EPSG:4326); areas are WGS84 geodesic measurements. No temperature or land-cover analysis.</div></div>')
         html('<div class="cf-section-head"><div class="cf-subheading">Vector context data · Increment 3</div><div class="cf-caption">Only explicit user requests load geospatial layers. Imported layers are not land-cover classifications.</div></div>')
         current_site = st.session_state.get("boundary_info")
@@ -418,4 +486,4 @@ with t3:
         card("Reports and exports · planned",'<div class="cf-outputrow"><span class="cf-action">PDF report</span><span class="cf-action">PNG comparison</span><span class="cf-action">CSV results</span><span class="cf-action">Method note</span></div><div class="cf-divider"></div><div class="cf-caption">All export controls are visual placeholders.</div>')
         card("Scientific interpretation",'<div class="cf-caption">Future reports will distinguish observed satellite inputs, modelled temperature patterns, predicted intervention effects and associated uncertainty.</div>')
 
-html('<div class="cf-footer">ClimaForma v2.4.2 · Increment 3 · Project and site drafts active; scientific controls disabled · Not suitable for environmental, engineering or investment decisions</div>')
+html('<div class="cf-footer">ClimaForma v2.4.4 · Increment 3.1 · Project and site drafts active; scientific controls disabled · Not suitable for environmental, engineering or investment decisions</div>')
