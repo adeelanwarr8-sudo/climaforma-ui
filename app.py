@@ -1,7 +1,7 @@
-"""ClimaForma v2.4.12 — Increment 4A: Landsat metadata discovery.
+"""ClimaForma v2.4.13 — Increment 4B: Landsat raster access and QA.
 
 Site mapping, showcase boundaries, vector context and address navigation remain.
-Satellite raster processing and the scientific modelling engine remain disabled.
+Thermal pixel quality assessment is enabled; temperature modelling is disabled.
 """
 
 import html as html_std
@@ -16,6 +16,7 @@ from geo_data import fetch_osm_buildings, process_geojson_bytes
 from address_lookup import search_addresses
 from showcase_sites import showcase_boundary, SHOWCASE_FILES
 from satellite_discovery import discover_landsat
+from landsat_raster import assess_candidate
 from buffer_geometry import (create_analysis_buffer, BUFFER_MIN_M, BUFFER_MAX_M,
                              BUFFER_DEFAULT_M, BUFFER_STEP_M)
 
@@ -209,8 +210,8 @@ with st.sidebar:
     st.caption("0 m = site only · 100 m default · 300 m maximum. Not a predicted cooling distance.")
     st.divider()
     html('<div class="cf-step">04 · Application status</div>')
-    html('<div class="cf-quiet"><strong>Increment 4A active</strong><div class="cf-caption">Landsat scene metadata discovery is available. Thermal rasters and scientific models remain disconnected.</div></div>')
-    st.caption("ClimaForma v2.4.12 · Landsat scene discovery (metadata only)")
+    html('<div class="cf-quiet"><strong>Increment 4B active</strong><div class="cf-caption">Landsat scene discovery and site-level raster QA are available. Temperature indicators and models remain disabled.</div></div>')
+    st.caption("ClimaForma v2.4.13 · Landsat raster quality checks")
 
 # Preserve the geocoded location when moving between Address lookup and
 # Draw site boundary. Both modes refer to the same user-selected location.
@@ -433,12 +434,13 @@ with t1:
                     st.rerun()
                 st.caption("Use the layer selector to show or hide context features. "
                            "The site boundary remains independent of this context layer.")
-        html('<div class="cf-section-head"><div class="cf-subheading">Landsat 8/9 · Recent scene discovery · Increment 4A</div><div class="cf-caption">Query Microsoft Planetary Computer for observation metadata. No satellite raster download, temperature estimates or site-pixel quality checks.</div></div>')
+        html('<div class="cf-section-head"><div class="cf-subheading">Landsat 8/9 · Scene discovery and quality assessment · Increment 4B</div><div class="cf-caption">Discover recent observations and explicitly assess site-level thermal/QA raster coverage. No temperature results or predictions yet.</div></div>')
         # Record which exact site geometry and buffer generated any prior result.
         import json as _json
         signature = (_json.dumps(current_site.geometry, sort_keys=True), analysis_buffer_m) if current_site else None
         if st.session_state.get("landsat_query_signature") != signature:
             st.session_state.pop("landsat_discovery_result", None)
+            st.session_state.pop("landsat_qa_result", None)
             st.session_state["landsat_query_signature"] = signature
         if current_site is None:
             st.info("Select or draw a site boundary to search for Landsat observations.")
@@ -449,8 +451,10 @@ with t1:
                 try:
                     with st.spinner("Searching Landsat scene metadata…"):
                         st.session_state["landsat_discovery_result"] = discover_landsat(current_site.geometry, analysis_buffer_m)
+                        st.session_state.pop("landsat_qa_result", None)
                 except ValueError as exc:
                     st.session_state.pop("landsat_discovery_result", None)
+                    st.session_state.pop("landsat_qa_result", None)
                     st.error(str(exc))
             discovery = st.session_state.get("landsat_discovery_result")
             if discovery is not None:
@@ -461,8 +465,31 @@ with t1:
                     st.code(candidate.item_id, language=None)
                     st.caption(f"Collection: {candidate.collection} · Thermal metadata asset: {candidate.thermal_asset} · "
                                f"Search performed: {discovery.searched_at_utc}")
-                    st.warning("Preliminary metadata candidate only. Cloud percentage describes the Landsat scene, "
-                               "not your specific site. Raster access, pixel-validity and site-specific cloud screening are pending.")
+                    st.caption("Scene-wide cloud metadata do not indicate site-level cloud conditions.")
+                    if st.button("Assess selected scene thermal/QA pixels", key="assess_thermal", use_container_width=True):
+                        try:
+                            with st.spinner("Reading thermal and QA raster windows for the selected site…"):
+                                st.session_state["landsat_qa_result"] = assess_candidate(
+                                    candidate, current_site.geometry, analysis_buffer_m)
+                        except ValueError as exc:
+                            st.session_state.pop("landsat_qa_result", None)
+                            st.error(str(exc))
+                    quality = st.session_state.get("landsat_qa_result")
+                    if quality is not None and quality.scene_id == candidate.item_id:
+                        if quality.status == "PRELIMINARY_QA_PASS":
+                            st.success("Site-level raster screening: preliminary pass")
+                        else:
+                            st.warning(f"Site-level raster screening: {quality.status.replace('_', ' ').title()}")
+                        q1, q2 = st.columns(2)
+                        with q1:
+                            st.metric("Valid site delivery pixels", f"{quality.site.valid_pixels}/{quality.site.footprint_pixels}")
+                            st.caption(f"Site valid coverage: {quality.site.coverage_pct}%" if quality.site.coverage_pct is not None else "Site has no pixel centres on this raster grid.")
+                        with q2:
+                            st.metric("Valid context delivery pixels", f"{quality.context.valid_pixels}/{quality.context.footprint_pixels}")
+                            st.caption(f"Site + buffer valid coverage: {quality.context.coverage_pct}%" if quality.context.coverage_pct is not None else "Context has no pixel centres on this raster grid.")
+                        for note in quality.notes:
+                            st.caption(note)
+                        st.info("This checks only the discovered candidate. If it fails, a later increment must evaluate other scenes within the 45-day limit. No temperatures are generated yet.")
                 else:
                     st.warning("No qualifying Landsat 8/9 scene metadata found within the permitted 3–45-day windows.")
                 for note in discovery.notes:
@@ -548,4 +575,4 @@ with t3:
         card("Reports and exports · planned",'<div class="cf-outputrow"><span class="cf-action">PDF report</span><span class="cf-action">PNG comparison</span><span class="cf-action">CSV results</span><span class="cf-action">Method note</span></div><div class="cf-divider"></div><div class="cf-caption">All export controls are visual placeholders.</div>')
         card("Scientific interpretation",'<div class="cf-caption">Future reports will distinguish observed satellite inputs, modelled temperature patterns, predicted intervention effects and associated uncertainty.</div>')
 
-html('<div class="cf-footer">ClimaForma v2.4.12 · Increment 4A · Landsat scene metadata only; temperature and predictive modelling disabled · Not suitable for environmental, engineering or investment decisions</div>')
+html('<div class="cf-footer">ClimaForma v2.4.13 · Increment 4B · Landsat scene metadata only; temperature and predictive modelling disabled · Not suitable for environmental, engineering or investment decisions</div>')
