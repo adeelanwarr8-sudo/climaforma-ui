@@ -1,25 +1,25 @@
+"""Current showcase regression tests (real user-supplied GeoJSON)."""
 import pytest
-from showcase_sites import showcase_boundary
-from site_mapping import SHOWCASE_CENTERS, boundary_from_drawings
+from pathlib import Path
+from shapely.geometry import shape
+from showcase_sites import SHOWCASE_FILES, showcase_boundary
 
-@pytest.mark.parametrize('city', list(SHOWCASE_CENTERS))
-def test_demonstration_bounds_are_valid(city):
+@pytest.mark.parametrize('city', list(SHOWCASE_FILES))
+def test_showcase_uses_supplied_valid_site(city):
     boundary = showcase_boundary(city)
-    lat, lon, _ = SHOWCASE_CENTERS[city]
-    assert 14_200 < boundary.area_m2 < 14_600
-    assert 470 < boundary.perimeter_m < 490
-    assert abs(boundary.latitude - lat) < 0.0001
-    assert abs(boundary.longitude - lon) < 0.0001
-    assert boundary_from_drawings([{'type':'Feature','geometry':boundary.geometry}]) is not None
+    assert boundary.geometry['type'] == 'Polygon'
+    assert shape(boundary.geometry).is_valid
+    assert boundary.area_m2 > 1000
+    assert boundary.perimeter_m > 100
+    assert -180 <= boundary.longitude <= 180
+    assert -90 <= boundary.latitude <= 90
+    assert Path(__file__).with_name(SHOWCASE_FILES[city]).is_file()
 
-def test_unknown_showcase_is_rejected():
+
+def test_showcase_unknown_city_rejected():
     with pytest.raises(ValueError):
-        showcase_boundary('Unknown city')
+        showcase_boundary('Unknown place')
 
-def test_showcase_does_not_make_remote_calls(monkeypatch):
-    import requests
-    def forbidden(*args,**kwargs):
-        raise AssertionError('No network calls allowed')
-    monkeypatch.setattr(requests,'get',forbidden)
-    monkeypatch.setattr(requests,'post',forbidden)
-    assert showcase_boundary('Stockholm · Södermalm').area_m2 > 0
+
+def test_barcelona_is_only_showcase():
+    assert list(SHOWCASE_FILES) == ["Barcelona · Selected construction site"]

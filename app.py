@@ -1,4 +1,4 @@
-"""ClimaForma v2.4.13 — Increment 4B: Landsat raster access and QA.
+"""ClimaForma v2.4.14 — Barcelona MVP · Increment 4B: Landsat raster access and QA.
 
 Site mapping, showcase boundaries, vector context and address navigation remain.
 Thermal pixel quality assessment is enabled; temperature modelling is disabled.
@@ -159,7 +159,8 @@ with st.sidebar:
     html('<div class="cf-step">02 · Site selection</div>')
     site_mode = st.selectbox("Site mode", SITE_MODES, key="site_mode")
     if site_mode == "Showcase site":
-        showcase_city = st.selectbox("Showcase city", SHOWCASES, key="showcase_city")
+        showcase_city = SHOWCASES[0]
+        st.caption("Showcase: Barcelona · Selected construction site")
         address_draft = ""
         st.caption("Your supplied demonstration site polygon loads automatically. Construction and parcel status are unverified.")
     elif site_mode == "Address lookup":
@@ -211,7 +212,7 @@ with st.sidebar:
     st.divider()
     html('<div class="cf-step">04 · Application status</div>')
     html('<div class="cf-quiet"><strong>Increment 4B active</strong><div class="cf-caption">Landsat scene discovery and site-level raster QA are available. Temperature indicators and models remain disabled.</div></div>')
-    st.caption("ClimaForma v2.4.13 · Landsat raster quality checks")
+    st.caption("ClimaForma v2.4.14 · Barcelona showcase · Landsat raster quality checks")
 
 # Preserve the geocoded location when moving between Address lookup and
 # Draw site boundary. Both modes refer to the same user-selected location.
@@ -575,4 +576,4 @@ with t3:
         card("Reports and exports · planned",'<div class="cf-outputrow"><span class="cf-action">PDF report</span><span class="cf-action">PNG comparison</span><span class="cf-action">CSV results</span><span class="cf-action">Method note</span></div><div class="cf-divider"></div><div class="cf-caption">All export controls are visual placeholders.</div>')
         card("Scientific interpretation",'<div class="cf-caption">Future reports will distinguish observed satellite inputs, modelled temperature patterns, predicted intervention effects and associated uncertainty.</div>')
 
-html('<div class="cf-footer">ClimaForma v2.4.13 · Increment 4B · Landsat scene metadata only; temperature and predictive modelling disabled · Not suitable for environmental, engineering or investment decisions</div>')
+html('<div class="cf-footer">ClimaForma v2.4.14 · Increment 4B · Landsat scene metadata only; temperature and predictive modelling disabled · Not suitable for environmental, engineering or investment decisions</div>')

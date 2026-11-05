@@ -1,6 +1,6 @@
 """Load user-supplied ClimaForma showcase boundaries from repository-root GeoJSON.
 
-The three supplied showcase files contain 3D MultiPolygon coordinates. The
+The Barcelona showcase file contains 3D MultiPolygon coordinates. The
 interactive site-drawing workflow uses 2D longitude/latitude Polygon rings,
 so elevation is intentionally discarded without modifying source GeoJSON.
 Construction activity and parcel status have not been independently verified.
@@ -14,9 +14,7 @@ from shapely.geometry import MultiPolygon, Polygon, shape
 from site_mapping import BoundaryInfo, parse_boundary
 
 SHOWCASE_FILES = {
-    "Stockholm · Södermalm": "SODERMALM_SITE.geojson",
     "Barcelona · Selected construction site": "BARCELONA_SITE.geojson",
-    "Vienna · Selected construction site": "VIENNA_SITE.geojson",
 }
 _DATA_DIR = Path(__file__).resolve().parent
 
