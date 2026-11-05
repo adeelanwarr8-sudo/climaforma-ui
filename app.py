@@ -14,6 +14,7 @@ from site_mapping import (BoundaryInfo, SHOWCASE_CENTERS, DEFAULT_CENTER,
                           boundary_from_drawings, same_boundary, boundary_preview_svg)
 from geo_data import fetch_osm_buildings, process_geojson_bytes
 from address_lookup import search_addresses
+from showcase_sites import showcase_boundary
 from buffer_geometry import (create_analysis_buffer, BUFFER_MIN_M, BUFFER_MAX_M,
                              BUFFER_DEFAULT_M, BUFFER_STEP_M)
 
@@ -136,7 +137,7 @@ SHOWCASES = ("Stockholm · Södermalm", "Barcelona · Eixample", "Vienna · Neub
 def selected_site_summary(mode: str, showcase: str, address: str) -> tuple[str, str, str]:
     """Present the selected location and site information."""
     if mode == "Showcase site":
-        return showcase, "Showcase location · site boundary is defined by your drawing", "Selected showcase"
+        return showcase, "Illustrative 120 m × 120 m demonstration AOI · not a verified land parcel", "Demo AOI"
     if mode == "Address lookup":
         return (address.strip() or "No address selected"), "Address location is a navigation reference; draw the site boundary separately", "Address location"
     return "Boundary not drawn", "Draw or edit the boundary directly on the map", "Boundary workflow"
@@ -144,7 +145,7 @@ def selected_site_summary(mode: str, showcase: str, address: str) -> tuple[str, 
 
 with st.sidebar:
     html('<div class="cf-brand">◈ ClimaForma</div><div class="cf-brandline">Climate-responsive design intelligence</div>')
-    html('<span class="cf-pill">V2.4.6 · SITE SELECTION</span>')
+    html('<span class="cf-pill">V2.4.7 · SHOWCASE AOIs</span>')
     st.divider()
     html('<div class="cf-step">01 · Project information</div>')
     st.text_input("Project name", value="Untitled climate design study", key="project_name", max_chars=100,
@@ -156,7 +157,7 @@ with st.sidebar:
     if site_mode == "Showcase site":
         showcase_city = st.selectbox("Showcase city", SHOWCASES, key="showcase_city")
         address_draft = ""
-        st.caption("Selecting a city does not load imagery or coordinates.")
+        st.caption("A 120 m × 120 m illustrative demonstration AOI loads automatically. It is not a verified property boundary.")
     elif site_mode == "Address lookup":
         showcase_city = SHOWCASES[0]
         address_draft = st.text_input("Address or place", key="address_draft", max_chars=180,
@@ -202,14 +203,15 @@ with st.sidebar:
     st.divider()
     html('<div class="cf-step">04 · Application status</div>')
     html('<div class="cf-quiet"><strong>Increment 3 active</strong><div class="cf-caption">Site drawing and optional polygon-layer acquisition are available. Satellite processing and scientific models remain disconnected.</div></div>')
-    st.caption("ClimaForma v2.4.6 · Address lookup and spatial buffer")
+    st.caption("ClimaForma v2.4.7 · Showcase AOIs, address lookup and spatial buffer")
 
 # A changed showcase/location mode resets the site boundary so it cannot be
 # accidentally attributed to another city. Address entry is NOT geocoded.
 map_context = (site_mode, showcase_city if site_mode == "Showcase site" else None)
 if st.session_state.get("map_context") != map_context:
     st.session_state["map_context"] = map_context
-    st.session_state["boundary_info"] = None
+    st.session_state["boundary_info"] = (showcase_boundary(showcase_city)
+                                          if site_mode == "Showcase site" else None)
     st.session_state["vector_layer"] = None
     st.session_state["map_drawings_seen"] = False
     st.session_state["map_generation"] = st.session_state.get("map_generation", 0) + 1
@@ -316,6 +318,8 @@ with t1:
     main, aside = st.columns([2.15, 1], gap="large")
     with main:
         html('<div class="cf-eyebrow">Site workspace</div>')
+        if site_mode == "Showcase site":
+            st.info("Showcase demonstration: the green rectangle is an illustrative AOI, not a verified project boundary. Edit it, clear it to draw your own, or switch to Address lookup for your actual project.")
         html('<div class="cf-quiet"><strong>Interactive mapping enabled</strong> · Draw one polygon or rectangle. Then edit or delete it; use Clear boundary before drawing a different site. Basemaps are for visual reference only.</div>')
         # Use a stable component key across ordinary Streamlit reruns so Leaflet
         # retains the user's unsaved drawing edits. A new site context resets it.
@@ -354,6 +358,13 @@ with t1:
                     st.rerun()
             except (ValueError, TypeError, KeyError) as error:
                 st.warning(f"Boundary not accepted: {error}")
+        if site_mode == "Showcase site" and st.session_state.get("boundary_info") is None:
+            if st.button("Reload demonstration AOI", key="reload_showcase"):
+                st.session_state["boundary_info"] = showcase_boundary(showcase_city)
+                st.session_state["vector_layer"] = None
+                st.session_state["map_drawings_seen"] = False
+                st.session_state["map_generation"] += 1
+                st.rerun()
         controls, status = st.columns([1, 2])
         with controls:
             if st.button("Clear boundary", key="clear_site_boundary", use_container_width=True):
