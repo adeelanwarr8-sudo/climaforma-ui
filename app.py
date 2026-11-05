@@ -1,4 +1,4 @@
-"""ClimaForma v2.4.15 — Barcelona MVP · Increment 4C: Landsat raster access and QA.
+"""ClimaForma v2.4.16 — Barcelona MVP · Increment 4C: Landsat raster access and QA.
 
 Site mapping, showcase boundaries, vector context and address navigation remain.
 Thermal pixel quality assessment is enabled; temperature modelling is disabled.
@@ -213,7 +213,7 @@ with st.sidebar:
     st.divider()
     html('<div class="cf-step">04 · Application status</div>')
     html('<div class="cf-quiet"><strong>Increment 4C active</strong><div class="cf-caption">Landsat thermal QA and Sentinel-2 optical indices are available. Temperature models remain disabled.</div></div>')
-    st.caption("ClimaForma v2.4.15 · Barcelona showcase · Landsat QA + Sentinel-2 optical indices")
+    st.caption("ClimaForma v2.4.16 · Barcelona showcase · Landsat QA + Sentinel-2 optical indices")
 
 # Preserve the geocoded location when moving between Address lookup and
 # Draw site boundary. Both modes refer to the same user-selected location.
@@ -496,7 +496,7 @@ with t1:
                     st.warning("No qualifying Landsat 8/9 scene metadata found within the permitted 3–45-day windows.")
                 for note in discovery.notes:
                     st.caption(note)
-        html('<div class="cf-section-head"><div class="cf-subheading">Sentinel-2 · Optical site characterization · Increment 4C</div><div class="cf-caption">Find one recent Sentinel-2 L2A scene and assess masked NDVI / NDBI on a 20 m analysis grid. Not a land-cover classification or temperature measurement.</div></div>')
+        html('<div class="cf-section-head"><div class="cf-subheading">Sentinel-2 · Optical site characterization · Increment 4C</div><div class="cf-caption">Find one Sentinel-2 L2A scene in the 90-day window (up to 180 days fallback) and assess masked NDVI / NDBI on a 20 m analysis grid. Not a land-cover classification or temperature measurement.</div></div>')
         if st.session_state.get("sentinel2_query_signature") != signature:
             st.session_state.pop("sentinel2_discovery", None)
             st.session_state.pop("sentinel2_indices", None)
@@ -504,7 +504,7 @@ with t1:
         if current_site is None:
             st.info("Select a site boundary to search for Sentinel-2 observations.")
         else:
-            st.caption("Search age: 3–7 days, then 8–15, 16–30 and 31–45 days. Maximum 45 days. "
+            st.caption("Sentinel-2 optical search: last 90 days first, then days 91–180 if no metadata-qualified candidate. Maximum 180 days. "
                        f"Site and {analysis_buffer_m} m context buffer used to locate candidate imagery.")
             if st.button("Find recent Sentinel-2 scenes", key="discover_sentinel", use_container_width=True):
                 try:
@@ -518,7 +518,7 @@ with t1:
             s2 = st.session_state.get("sentinel2_discovery")
             if s2 is not None:
                 if s2.candidate is None:
-                    st.warning("No metadata-qualified Sentinel-2 L2A candidate found within 45 days.")
+                    st.warning("No metadata-qualified Sentinel-2 L2A candidate found within 180 days.")
                 else:
                     sc = s2.candidate
                     st.success(f"Sentinel-2 candidate: {sc.platform.upper()} · {sc.age_days} days old · {sc.tier}")
@@ -547,7 +547,7 @@ with t1:
                             st.metric("Mean NDBI", f"{indices.ndbi_mean:.3f}" if indices.ndbi_mean is not None else "—")
                         for note in indices.notes:
                             st.caption(note)
-                        st.info("NDVI and NDBI are optical indices, not verified vegetation or built-up area percentages. No satellite temperature is inferred.")
+                        st.info("Single-date optical indices only; 90/180-day search does not yet create a multi-date composite. NDVI/NDBI are not land-cover percentages or thermal observations.")
         card("Surface-cover categories", '<div class="cf-legend"><i class="cf-dot" style="background:#8faba6"></i>Building</div><div class="cf-legend"><i class="cf-dot" style="background:#c6c0b2"></i>Paved surfaces</div><div class="cf-legend"><i class="cf-dot" style="background:#559a74"></i>Tree canopy</div><div class="cf-legend"><i class="cf-dot" style="background:#a8c9a2"></i>Grass / planting</div><div class="cf-legend"><i class="cf-dot" style="background:#86bfc7"></i>Water</div><div class="cf-legend"><i class="cf-dot" style="background:#cfb99c"></i>Bare soil</div><div class="cf-caption">Legend illustrates planned categories; no land-cover classification has been performed.</div>')
     with aside:
         boundary = st.session_state.get("boundary_info")
@@ -629,4 +629,4 @@ with t3:
         card("Reports and exports · planned",'<div class="cf-outputrow"><span class="cf-action">PDF report</span><span class="cf-action">PNG comparison</span><span class="cf-action">CSV results</span><span class="cf-action">Method note</span></div><div class="cf-divider"></div><div class="cf-caption">All export controls are visual placeholders.</div>')
         card("Scientific interpretation",'<div class="cf-caption">Future reports will distinguish observed satellite inputs, modelled temperature patterns, predicted intervention effects and associated uncertainty.</div>')
 
-html('<div class="cf-footer">ClimaForma v2.4.15 · Increment 4C · Landsat QA and Sentinel-2 optical indices; temperature and predictive modelling disabled · Not suitable for environmental, engineering or investment decisions</div>')
+html('<div class="cf-footer">ClimaForma v2.4.16 · Increment 4C · Landsat QA and Sentinel-2 optical indices; temperature and predictive modelling disabled · Not suitable for environmental, engineering or investment decisions</div>')

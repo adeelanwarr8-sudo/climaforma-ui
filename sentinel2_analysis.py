@@ -1,6 +1,6 @@
 """ClimaForma 4C: Sentinel-2 L2A acquisition and bounded reflectance indices.
 
-One user-initiated candidate at a time. Do not infer a land-cover classification,
+One user-initiated optical candidate at a time (0–90 days, then 91–180 days). Do not infer a land-cover classification,
 thermal temperature or cooling prediction from these optical observations.
 """
 from __future__ import annotations
@@ -14,9 +14,12 @@ from typing import Any
 import numpy as np
 import requests
 
-from satellite_discovery import AGE_TIERS, STAC_SEARCH_URL, _bbox, _parse_datetime
+from satellite_discovery import STAC_SEARCH_URL, _bbox, _parse_datetime
 from buffer_geometry import create_analysis_buffer
 
+# Optical observations may characterize surfaces over a longer period than thermal observations.
+# Windows are non-overlapping so fallback uses older scenes only when primary fails.
+OPTICAL_AGE_TIERS = ((0, 90), (91, 180))
 COLLECTION = 'sentinel-2-l2a'
 ITEM_URL = 'https://planetarycomputer.microsoft.com/api/stac/v1/collections/sentinel-2-l2a/items/'
 REQUIRED_ASSETS = ('B04', 'B08', 'B11', 'SCL')
@@ -106,7 +109,7 @@ def discover_sentinel(boundary_geom: dict, buffer_m: int, *, now=None, session=N
     bbox = _bbox(boundary_geom, buffer_m)
     client = session or requests
     tiers = []
-    for tier in AGE_TIERS:
+    for tier in OPTICAL_AGE_TIERS:
         label = f'{tier[0]}–{tier[1]} days'
         tiers.append(label)
         payload = {'collections': [COLLECTION], 'bbox': bbox,
@@ -127,8 +130,7 @@ def discover_sentinel(boundary_geom: dict, buffer_m: int, *, now=None, session=N
         if qualified:
             qualified.sort(key=lambda x: (-_parse_datetime(x.observed_utc).timestamp(), x.scene_cloud_pct))
             return SentinelDiscovery(qualified[0], tuple(tiers), now.isoformat(timespec='seconds'))
-        # A single page is sufficient for the Barcelona MVP's small footprint,
-        # but do not claim exhaustive per-tier coverage if search pagination exists.
+        # Search pagination must not silently omit newer or better scenes.
         if any(isinstance(x, dict) and x.get('rel') == 'next' for x in data.get('links', [])):
             raise ValueError('Sentinel catalogue returned more candidate pages than this MVP can check; refine the site or retry.')
     return SentinelDiscovery(None, tuple(tiers), now.isoformat(timespec='seconds'))
