@@ -17,6 +17,7 @@ from address_lookup import search_addresses
 from showcase_sites import showcase_boundary, SHOWCASE_FILES
 from satellite_discovery import discover_landsat
 from landsat_raster import assess_candidate
+from landsat_temperature import assess_temperature_candidate
 from sentinel2_analysis import discover_sentinel, assess_sentinel
 from buffer_geometry import (create_analysis_buffer, BUFFER_MIN_M, BUFFER_MAX_M,
                              BUFFER_DEFAULT_M, BUFFER_STEP_M)
@@ -150,7 +151,7 @@ def selected_site_summary(mode: str, showcase: str, address: str) -> tuple[str, 
 
 with st.sidebar:
     html('<div class="cf-brand">◈ ClimaForma</div><div class="cf-brandline">Climate-responsive design intelligence</div>')
-    html('<span class="cf-pill">V2.4.15 · INCREMENT 4C</span>')
+    html('<span class="cf-pill">V2.4.17 · INCREMENT 4D</span>')
     st.divider()
     html('<div class="cf-step">01 · Project information</div>')
     st.text_input("Project name", value="Untitled climate design study", key="project_name", max_chars=100,
@@ -212,8 +213,8 @@ with st.sidebar:
     st.caption("0 m = site only · 100 m default · 300 m maximum. Not a predicted cooling distance.")
     st.divider()
     html('<div class="cf-step">04 · Application status</div>')
-    html('<div class="cf-quiet"><strong>Increment 4C active</strong><div class="cf-caption">Landsat thermal QA and Sentinel-2 optical indices are available. Temperature models remain disabled.</div></div>')
-    st.caption("ClimaForma v2.4.16 · Barcelona showcase · Landsat QA + Sentinel-2 optical indices")
+    html('<div class="cf-quiet"><strong>Increment 4D active</strong><div class="cf-caption">Landsat thermal QA and Sentinel-2 optical indices are available. Observed Landsat LST is available after QA; predictive modelling remains disabled.</div></div>')
+    st.caption("ClimaForma v2.4.17 · Barcelona showcase · Landsat QA + Sentinel-2 optical indices")
 
 # Preserve the geocoded location when moving between Address lookup and
 # Draw site boundary. Both modes refer to the same user-selected location.
@@ -253,6 +254,14 @@ map_center = ((st.session_state["boundary_info"].latitude,
               if active_address else DEFAULT_CENTER)
 if active_address and site_mode in ("Address lookup", "Draw site boundary"):
     address_draft = active_address["label"]
+
+# Invalidate old satellite results BEFORE Folium renders. A different
+# site geometry or buffer cannot inherit the previous temperature overlay.
+import json as _site_json
+_site_boundary = st.session_state.get("boundary_info")
+_current_satellite_signature = (_site_json.dumps(_site_boundary.geometry, sort_keys=True), analysis_buffer_m) if _site_boundary else None
+if st.session_state.get("landsat_query_signature") != _current_satellite_signature:
+    st.session_state.pop("landsat_temperature_result", None)
 
 
 def build_site_map(center: tuple[float, float, int], boundary: BoundaryInfo | None) -> folium.Map:
@@ -312,6 +321,15 @@ def build_site_map(center: tuple[float, float, int], boundary: BoundaryInfo | No
     ).add_to(m)
     Fullscreen(position="topright").add_to(m)
     MousePosition(position="bottomleft", separator=" / ", prefix="Lat/Lon:", num_digits=5).add_to(m)
+    thermal = st.session_state.get("landsat_temperature_result")
+    if (boundary is not None and thermal is not None and thermal.overlay_png is not None
+            and thermal.overlay_bounds is not None
+            and st.session_state.get("landsat_query_signature") == _current_satellite_signature):
+        import base64
+        image_url = "data:image/png;base64," + base64.b64encode(thermal.overlay_png).decode("ascii")
+        folium.raster_layers.ImageOverlay(image=image_url, bounds=thermal.overlay_bounds,
+                                          name=f"Observed LST · {thermal.observed_utc[:10]}",
+                                          opacity=0.78, interactive=False, show=True).add_to(m)
     layer = st.session_state.get("vector_layer")
     if layer is not None and layer.features:
         folium.GeoJson(layer.feature_collection, name=layer.name,
@@ -328,7 +346,7 @@ site_kind_safe = html_std.escape(site_kind)
 project_label_safe = html_std.escape(project_label)
 
 html('<div class="cf-kicker">Architecture · Landscape · Climate adaptation</div><div class="cf-heading">Design cooler places, with clarity.</div><div class="cf-lede">A visual workspace for exploring site conditions, shaping climate-responsive design alternatives, and reviewing comparative outcomes.</div>')
-html(f'<div class="cf-quiet"><strong>Project:</strong> {project_label_safe} &nbsp; · &nbsp; <strong>Site:</strong> {site_title_safe} &nbsp; · &nbsp; Scene discovery only · No temperature analysis</div>')
+html(f'<div class="cf-quiet"><strong>Project:</strong> {project_label_safe} &nbsp; · &nbsp; <strong>Site:</strong> {site_title_safe} &nbsp; · &nbsp; Observed LST available after QA · No cooling predictions</div>')
 
 t1, t2, t3 = st.tabs(["01  Existing Site", "02  Design Options", "03  Compare Options"])
 
@@ -436,13 +454,14 @@ with t1:
                     st.rerun()
                 st.caption("Use the layer selector to show or hide context features. "
                            "The site boundary remains independent of this context layer.")
-        html('<div class="cf-section-head"><div class="cf-subheading">Landsat 8/9 · Scene discovery and quality assessment · Increment 4B</div><div class="cf-caption">Discover recent observations and explicitly assess site-level thermal/QA raster coverage. No temperature results or predictions yet.</div></div>')
+        html('<div class="cf-section-head"><div class="cf-subheading">Landsat 8/9 · Scene discovery and quality assessment · Increment 4B</div><div class="cf-caption">Discover recent observations and explicitly assess site-level thermal/QA raster coverage. Observed LST available on demand after QA; no cooling predictions.</div></div>')
         # Record which exact site geometry and buffer generated any prior result.
         import json as _json
         signature = (_json.dumps(current_site.geometry, sort_keys=True), analysis_buffer_m) if current_site else None
         if st.session_state.get("landsat_query_signature") != signature:
             st.session_state.pop("landsat_discovery_result", None)
             st.session_state.pop("landsat_qa_result", None)
+            st.session_state.pop("landsat_temperature_result", None)
             st.session_state["landsat_query_signature"] = signature
         if current_site is None:
             st.info("Select or draw a site boundary to search for Landsat observations.")
@@ -454,9 +473,11 @@ with t1:
                     with st.spinner("Searching Landsat scene metadata…"):
                         st.session_state["landsat_discovery_result"] = discover_landsat(current_site.geometry, analysis_buffer_m)
                         st.session_state.pop("landsat_qa_result", None)
+                        st.session_state.pop("landsat_temperature_result", None)
                 except ValueError as exc:
                     st.session_state.pop("landsat_discovery_result", None)
                     st.session_state.pop("landsat_qa_result", None)
+                    st.session_state.pop("landsat_temperature_result", None)
                     st.error(str(exc))
             discovery = st.session_state.get("landsat_discovery_result")
             if discovery is not None:
@@ -491,7 +512,38 @@ with t1:
                             st.caption(f"Site + buffer valid coverage: {quality.context.coverage_pct}%" if quality.context.coverage_pct is not None else "Context has no pixel centres on this raster grid.")
                         for note in quality.notes:
                             st.caption(note)
-                        st.info("This checks only the discovered candidate. If it fails, a later increment must evaluate other scenes within the 45-day limit. No temperatures are generated yet.")
+                        st.info("This evaluates the discovered candidate only. If its QA fails, alternate-scene screening remains future work.")
+                        if quality.status == "PRELIMINARY_QA_PASS":
+                            if st.button("Calculate and display observed Landsat LST", key="calculate_lst", use_container_width=True):
+                                try:
+                                    with st.spinner("Calculating observed surface temperature and georeferenced overlay…"):
+                                        st.session_state["landsat_temperature_result"] = assess_temperature_candidate(
+                                            candidate, current_site.geometry, analysis_buffer_m)
+                                    st.session_state["map_generation"] += 1
+                                    st.rerun()
+                                except ValueError as exc:
+                                    st.session_state.pop("landsat_temperature_result", None)
+                                    st.error(str(exc))
+                            thermal_result = st.session_state.get("landsat_temperature_result")
+                            if thermal_result is not None and thermal_result.scene_id == candidate.item_id:
+                                if thermal_result.status == "SITE_QA_PASS":
+                                    st.success("Observed Landsat LST: computed from QA-masked thermal pixels")
+                                    c1,c2 = st.columns(2)
+                                    with c1: st.metric("Mean site LST (°C)", f"{thermal_result.mean_c:.1f}" if thermal_result.mean_c is not None else "—")
+                                    with c2: st.metric("95th percentile site LST (°C)", f"{thermal_result.p95_c:.1f}" if thermal_result.p95_c is not None else "—")
+                                    st.caption(f"Site valid pixels: {thermal_result.valid_site_pixels}/{thermal_result.site_pixels} ({thermal_result.site_coverage_pct:.1f}%). "
+                                               f"Context coverage: {thermal_result.context_coverage_pct:.1f}%.")
+                                    if thermal_result.display_range_c:
+                                        st.caption(f"Map colors: {thermal_result.display_range_c[0]:.1f}–{thermal_result.display_range_c[1]:.1f} °C (2nd–98th context percentiles); "
+                                                   "blue/cyan is cooler, yellow/red is warmer. Toggle observed LST in the map layer selector.")
+                                    if st.button("Remove LST map", key="remove_lst_map"):
+                                        st.session_state.pop("landsat_temperature_result", None)
+                                        st.session_state["map_generation"] += 1
+                                        st.rerun()
+                                else:
+                                    st.warning(f"LST withheld: {thermal_result.status}")
+                                for note in thermal_result.notes:
+                                    st.caption(note)
                 else:
                     st.warning("No qualifying Landsat 8/9 scene metadata found within the permitted 3–45-day windows.")
                 for note in discovery.notes:
@@ -563,13 +615,21 @@ with t1:
             area_text = "—"
             geometry_details = '<div class="cf-caption">Draw one boundary in the map workspace to display area and coordinates.</div>'
         card("Site information", f'<div class="cf-eyebrow">{site_kind_safe}</div><div class="cf-scenario-name">{site_title_safe}</div><div class="cf-caption">{site_note_safe}</div><div class="cf-divider"></div><div class="cf-metric-label">Site area</div><div class="cf-metric-value">{area_text}</div>{geometry_details}<div class="cf-divider"></div><div class="cf-metric-label">Analysis period</div><div class="cf-metric-value">—</div>')
-        card("Temperature layer", '<div class="cf-muted-block"><strong>Temperature map placeholder</strong><span>Not connected to satellite observations</span></div><div class="cf-caption">Future display: temperature scale, date and source resolution.</div>')
+        active_lst = st.session_state.get("landsat_temperature_result")
+        if active_lst is not None and active_lst.status == "SITE_QA_PASS":
+            card("Observed LST layer", f'<div class="cf-metric-label">Acquisition UTC</div><div class="cf-note">{active_lst.observed_utc}</div>'
+                 f'<div class="cf-metric-label">Mean site LST</div><div class="cf-metric-value">{active_lst.mean_c:.1f} °C</div>'
+                 f'<div class="cf-note">Landsat C2 L2; 30 m delivery grid, ~100 m native thermal support. Map layer is toggleable.</div>')
+        else:
+            card("Temperature layer", '<div class="cf-muted-block"><strong>Observed LST not computed</strong><span>Discover Landsat, assess QA, then calculate LST.</span></div>')
         card("Data and quality", '<div class="cf-muted-block">Satellite sources, coverage and model status will appear here.</div>')
     html('<div class="cf-section-head"><div class="cf-subheading">Baseline indicators</div><div class="cf-caption">Proposed metric locations. No values have been calculated.</div></div>')
     m1, m2, m3, m4 = st.columns(4)
-    with m1: metric("Mean surface temperature")
-    with m2: metric("95th-percentile temperature")
-    with m3: metric("Hot-area proportion")
+    active_lst = st.session_state.get("landsat_temperature_result")
+    observed_ok = active_lst is not None and active_lst.status == "SITE_QA_PASS"
+    with m1: metric("Mean surface temperature", f"{active_lst.mean_c:.1f} °C" if observed_ok else "—", "Observed Landsat overpass; site pixel-centre estimate" if observed_ok else "Awaiting observed LST")
+    with m2: metric("95th-percentile temperature", f"{active_lst.p95_c:.1f} °C" if observed_ok else "—", "Based on valid 30 m delivery pixels; limited thermal independence" if observed_ok else "Awaiting observed LST")
+    with m3: metric("Hot-area proportion", "—", "Not enabled: no absolute hot-surface threshold")
     with m4: metric("Tree canopy coverage")
 
 with t2:
@@ -629,4 +689,4 @@ with t3:
         card("Reports and exports · planned",'<div class="cf-outputrow"><span class="cf-action">PDF report</span><span class="cf-action">PNG comparison</span><span class="cf-action">CSV results</span><span class="cf-action">Method note</span></div><div class="cf-divider"></div><div class="cf-caption">All export controls are visual placeholders.</div>')
         card("Scientific interpretation",'<div class="cf-caption">Future reports will distinguish observed satellite inputs, modelled temperature patterns, predicted intervention effects and associated uncertainty.</div>')
 
-html('<div class="cf-footer">ClimaForma v2.4.16 · Increment 4C · Landsat QA and Sentinel-2 optical indices; temperature and predictive modelling disabled · Not suitable for environmental, engineering or investment decisions</div>')
+html('<div class="cf-footer">ClimaForma v2.4.17 · Increment 4D · Observed Landsat LST and Sentinel-2 indices; cooling predictions disabled · Not suitable for environmental, engineering or investment decisions</div>')
