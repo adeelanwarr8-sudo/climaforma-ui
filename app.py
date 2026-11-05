@@ -140,12 +140,14 @@ def selected_site_summary(mode: str, showcase: str, address: str) -> tuple[str, 
         return showcase, "Illustrative 120 m × 120 m demonstration AOI · not a verified land parcel", "Demo AOI"
     if mode == "Address lookup":
         return (address.strip() or "No address selected"), "Address location is a navigation reference; draw the site boundary separately", "Address location"
+    if address:
+        return address, "Draw or edit the project boundary at the selected address", "Address-based site"
     return "Boundary not drawn", "Draw or edit the boundary directly on the map", "Boundary workflow"
 
 
 with st.sidebar:
     html('<div class="cf-brand">◈ ClimaForma</div><div class="cf-brandline">Climate-responsive design intelligence</div>')
-    html('<span class="cf-pill">V2.4.7 · SHOWCASE AOIs</span>')
+    html('<span class="cf-pill">V2.4.8 · ADDRESS NAVIGATION</span>')
     st.divider()
     html('<div class="cf-step">01 · Project information</div>')
     st.text_input("Project name", value="Untitled climate design study", key="project_name", max_chars=100,
@@ -191,7 +193,12 @@ with st.sidebar:
     else:
         showcase_city = SHOWCASES[0]
         address_draft = ""
-        st.info("Go to Existing Site → draw one polygon or rectangle on the map. Use the edit/delete toolbar to adjust it.")
+        active_address = st.session_state.get("address_location")
+        if active_address:
+            st.success(f"Drawing location: {active_address['label']}")
+            st.caption("The map remains at your searched address. Draw one polygon or rectangle to define the actual site.")
+        else:
+            st.info("Go to Existing Site → draw one polygon or rectangle on the map. Use the edit/delete toolbar to adjust it.")
     st.divider()
     html('<div class="cf-step">03 · Analysis settings</div>')
     analysis_buffer_m = st.slider("Analysis buffer (m)", min_value=BUFFER_MIN_M,
@@ -203,21 +210,29 @@ with st.sidebar:
     st.divider()
     html('<div class="cf-step">04 · Application status</div>')
     html('<div class="cf-quiet"><strong>Increment 3 active</strong><div class="cf-caption">Site drawing and optional polygon-layer acquisition are available. Satellite processing and scientific models remain disconnected.</div></div>')
-    st.caption("ClimaForma v2.4.7 · Showcase AOIs, address lookup and spatial buffer")
+    st.caption("ClimaForma v2.4.8 · Address navigation, showcase AOIs and spatial buffer")
 
-# A changed showcase/location mode resets the site boundary so it cannot be
-# accidentally attributed to another city. Address entry is NOT geocoded.
+# Preserve the geocoded location when moving between Address lookup and
+# Draw site boundary. Both modes refer to the same user-selected location.
+# A showcase is a different site context and must reset its project geometry.
 map_context = (site_mode, showcase_city if site_mode == "Showcase site" else None)
-if st.session_state.get("map_context") != map_context:
+previous_context = st.session_state.get("map_context")
+if previous_context != map_context:
+    previous_mode = previous_context[0] if isinstance(previous_context, tuple) else None
+    address_to_drawing = (previous_mode == "Address lookup" and site_mode == "Draw site boundary")
+    drawing_to_address = (previous_mode == "Draw site boundary" and site_mode == "Address lookup")
+    same_address_workflow = address_to_drawing or drawing_to_address
     st.session_state["map_context"] = map_context
-    st.session_state["boundary_info"] = (showcase_boundary(showcase_city)
-                                          if site_mode == "Showcase site" else None)
-    st.session_state["vector_layer"] = None
-    st.session_state["map_drawings_seen"] = False
+    if not same_address_workflow:
+        st.session_state["boundary_info"] = (showcase_boundary(showcase_city)
+                                              if site_mode == "Showcase site" else None)
+        st.session_state["vector_layer"] = None
+        st.session_state["map_drawings_seen"] = False
+        st.session_state["address_location"] = None
+        st.session_state["address_matches"] = []
+        st.session_state["address_match_query"] = None
+    # Remount Leaflet when switching modes so the mapped address is respected.
     st.session_state["map_generation"] = st.session_state.get("map_generation", 0) + 1
-    st.session_state["address_location"] = None
-    st.session_state["address_matches"] = []
-    st.session_state["address_match_query"] = None
 
 # Changing the slider rebuilds the visible map while preserving the site
 # boundary and any existing context dataset.
@@ -225,14 +240,13 @@ if st.session_state.get("buffer_displayed_m") != analysis_buffer_m:
     st.session_state["buffer_displayed_m"] = analysis_buffer_m
     st.session_state["map_generation"] = st.session_state.get("map_generation", 0) + 1
 
+active_address = st.session_state.get("address_location")
 map_center = (SHOWCASE_CENTERS.get(showcase_city, DEFAULT_CENTER)
               if site_mode == "Showcase site" else
-              (st.session_state["address_location"]["lat"],
-               st.session_state["address_location"]["lon"], 17)
-              if site_mode == "Address lookup" and st.session_state.get("address_location")
-              else DEFAULT_CENTER)
-if site_mode == "Address lookup" and st.session_state.get("address_location"):
-    address_draft = st.session_state["address_location"]["label"]
+              (active_address["lat"], active_address["lon"], 17)
+              if active_address else DEFAULT_CENTER)
+if active_address and site_mode in ("Address lookup", "Draw site boundary"):
+    address_draft = active_address["label"]
 
 
 def build_site_map(center: tuple[float, float, int], boundary: BoundaryInfo | None) -> folium.Map:
@@ -240,7 +254,7 @@ def build_site_map(center: tuple[float, float, int], boundary: BoundaryInfo | No
     latitude, longitude, zoom = center
     m = folium.Map(location=[latitude, longitude], zoom_start=zoom, tiles=None, control_scale=True)
     folium.TileLayer(tiles="OpenStreetMap", name="Street map", show=True).add_to(m)
-    if site_mode == "Address lookup" and st.session_state.get("address_location"):
+    if site_mode in ("Address lookup", "Draw site boundary") and st.session_state.get("address_location"):
         loc = st.session_state["address_location"]
         folium.Marker([loc["lat"], loc["lon"]],
                       tooltip="Address search result (not a site boundary)",
