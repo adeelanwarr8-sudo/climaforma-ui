@@ -206,7 +206,6 @@ with st.sidebar:
                                   step=BUFFER_STEP_M, key="analysis_buffer_m",
                                   help="Automatic context buffer around the selected site; does not change site area.")
     st.caption("0 m = site only · 100 m default · 300 m maximum. Not a predicted cooling distance.")
-    st.number_input("Hot surface threshold (°C)", value=43.0, disabled=True)
     st.divider()
     html('<div class="cf-step">04 · Application status</div>')
     html('<div class="cf-quiet"><strong>Increment 3 active</strong><div class="cf-caption">Site drawing and optional polygon-layer acquisition are available. Satellite processing and scientific models remain disconnected.</div></div>')
