@@ -1,4 +1,4 @@
-"""ClimaForma v2.4.16 — Barcelona MVP · Increment 4C: Landsat raster access and QA.
+"""ClimaForma v2.4.18 — Barcelona MVP · Increment 4E: Landsat raster access and QA.
 
 Site mapping, showcase boundaries, vector context and address navigation remain.
 Thermal pixel quality assessment is enabled; temperature modelling is disabled.
@@ -213,8 +213,8 @@ with st.sidebar:
     st.caption("0 m = site only · 100 m default · 300 m maximum. Not a predicted cooling distance.")
     st.divider()
     html('<div class="cf-step">04 · Application status</div>')
-    html('<div class="cf-quiet"><strong>Increment 4D active</strong><div class="cf-caption">Landsat thermal QA and Sentinel-2 optical indices are available. Observed Landsat LST is available after QA; predictive modelling remains disabled.</div></div>')
-    st.caption("ClimaForma v2.4.17 · Barcelona showcase · Landsat QA + Sentinel-2 optical indices")
+    html('<div class="cf-quiet"><strong>Increment 4E active</strong><div class="cf-caption">Landsat thermal QA and Sentinel-2 optical indices are available. Integrated observed LST and Sentinel-2 index maps are available after QA; predictions remain disabled.</div></div>')
+    st.caption("ClimaForma v2.4.18 · Barcelona showcase · Landsat QA + Sentinel-2 optical indices")
 
 # Preserve the geocoded location when moving between Address lookup and
 # Draw site boundary. Both modes refer to the same user-selected location.
@@ -330,6 +330,22 @@ def build_site_map(center: tuple[float, float, int], boundary: BoundaryInfo | No
         folium.raster_layers.ImageOverlay(image=image_url, bounds=thermal.overlay_bounds,
                                           name=f"Observed LST · {thermal.observed_utc[:10]}",
                                           opacity=0.78, interactive=False, show=True).add_to(m)
+    optical = st.session_state.get("sentinel2_indices")
+    optical_discovery = st.session_state.get("sentinel2_discovery")
+    optical_candidate = optical_discovery.candidate if optical_discovery is not None else None
+    if (boundary is not None and optical is not None and optical.status == "PRELIMINARY_QA_PASS"
+            and optical_candidate is not None and optical.scene_id == optical_candidate.item_id
+            and st.session_state.get("sentinel2_query_signature") == _current_satellite_signature
+            and optical.overlay_bounds is not None):
+        import base64
+        for name, png in (("NDVI", optical.ndvi_overlay_png), ("NDBI", optical.ndbi_overlay_png)):
+            if png:
+                data_url = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+                folium.raster_layers.ImageOverlay(
+                    image=data_url, bounds=optical.overlay_bounds,
+                    name=f"Sentinel-2 {name} · {optical.observed_utc[:10]}",
+                    opacity=0.82, interactive=False, show=False,
+                ).add_to(m)
     layer = st.session_state.get("vector_layer")
     if layer is not None and layer.features:
         folium.GeoJson(layer.feature_collection, name=layer.name,
@@ -417,7 +433,7 @@ with t1:
             st.caption(f"Analysis context: {analysis_buffer_m} m around the active site. "
                        "Toggle the blue dashed buffer in the map layer selector; "
                        "site area and perimeter remain unchanged.")
-        html('<div class="cf-toolbar"><div class="cf-minihead">Map tools · active</div><span class="cf-chip">Zoom / pan</span><span class="cf-chip">Draw polygon / rectangle</span><span class="cf-chip">Edit / delete</span><span class="cf-chip">Street / aerial basemap</span><div class="cf-caption">Coordinates are WGS84 (EPSG:4326); areas are WGS84 geodesic measurements. No temperature or land-cover analysis.</div></div>')
+        html('<div class="cf-toolbar"><div class="cf-minihead">Map tools · active</div><span class="cf-chip">Zoom / pan</span><span class="cf-chip">Draw polygon / rectangle</span><span class="cf-chip">Edit / delete</span><span class="cf-chip">Street / aerial basemap</span><div class="cf-caption">Coordinates are WGS84 (EPSG:4326); areas are geodesic measurements. Satellite analyses are optional and user-initiated; no land-cover classification or cooling predictions.</div></div>')
         html('<div class="cf-section-head"><div class="cf-subheading">Vector context data · Increment 3</div><div class="cf-caption">Only explicit user requests load geospatial layers. Imported layers are not land-cover classifications.</div></div>')
         current_site = st.session_state.get("boundary_info")
         if current_site is None:
@@ -580,6 +596,8 @@ with t1:
                         try:
                             with st.spinner("Reading Sentinel-2 bands and cloud classification…"):
                                 st.session_state["sentinel2_indices"] = assess_sentinel(sc, current_site.geometry, analysis_buffer_m)
+                            st.session_state["map_generation"] += 1
+                            st.rerun()
                         except ValueError as exc:
                             st.session_state.pop("sentinel2_indices", None)
                             st.error(str(exc))
@@ -600,7 +618,11 @@ with t1:
                         for note in indices.notes:
                             st.caption(note)
                         st.info("Single-date optical indices only; 90/180-day search does not yet create a multi-date composite. NDVI/NDBI are not land-cover percentages or thermal observations.")
-        card("Surface-cover categories", '<div class="cf-legend"><i class="cf-dot" style="background:#8faba6"></i>Building</div><div class="cf-legend"><i class="cf-dot" style="background:#c6c0b2"></i>Paved surfaces</div><div class="cf-legend"><i class="cf-dot" style="background:#559a74"></i>Tree canopy</div><div class="cf-legend"><i class="cf-dot" style="background:#a8c9a2"></i>Grass / planting</div><div class="cf-legend"><i class="cf-dot" style="background:#86bfc7"></i>Water</div><div class="cf-legend"><i class="cf-dot" style="background:#cfb99c"></i>Bare soil</div><div class="cf-caption">Legend illustrates planned categories; no land-cover classification has been performed.</div>')
+        card("Environmental layer guide", '<div class="cf-caption"><strong>Observed LST</strong> — blue/cyan cooler, yellow/red warmer; scene-relative display range in °C.</div>'
+             '<div class="cf-caption"><strong>NDVI</strong> — brown/cream (lower values), green (higher values); fixed −1 to +1 scale.</div>'
+             '<div class="cf-caption"><strong>NDBI</strong> — teal/cream (lower values), brown (higher values); fixed −1 to +1 scale.</div>'
+             '<div class="cf-caption">Toggle overlays using the map layer selector. NDVI and NDBI do not identify surface-cover classes. Displayed pixels are not intervention effects.</div>')
+
     with aside:
         boundary = st.session_state.get("boundary_info")
         if boundary is not None:
@@ -614,7 +636,7 @@ with t1:
         else:
             area_text = "—"
             geometry_details = '<div class="cf-caption">Draw one boundary in the map workspace to display area and coordinates.</div>'
-        card("Site information", f'<div class="cf-eyebrow">{site_kind_safe}</div><div class="cf-scenario-name">{site_title_safe}</div><div class="cf-caption">{site_note_safe}</div><div class="cf-divider"></div><div class="cf-metric-label">Site area</div><div class="cf-metric-value">{area_text}</div>{geometry_details}<div class="cf-divider"></div><div class="cf-metric-label">Analysis period</div><div class="cf-metric-value">—</div>')
+        card("Site information", f'<div class="cf-eyebrow">{site_kind_safe}</div><div class="cf-scenario-name">{site_title_safe}</div><div class="cf-caption">{site_note_safe}</div><div class="cf-divider"></div><div class="cf-metric-label">Site area</div><div class="cf-metric-value">{area_text}</div>{geometry_details}<div class="cf-divider"></div><div class="cf-metric-label">Analysis buffer</div><div class="cf-note">{analysis_buffer_m} m · context only</div>')
         active_lst = st.session_state.get("landsat_temperature_result")
         if active_lst is not None and active_lst.status == "SITE_QA_PASS":
             card("Observed LST layer", f'<div class="cf-metric-label">Acquisition UTC</div><div class="cf-note">{active_lst.observed_utc}</div>'
@@ -622,15 +644,34 @@ with t1:
                  f'<div class="cf-note">Landsat C2 L2; 30 m delivery grid, ~100 m native thermal support. Map layer is toggleable.</div>')
         else:
             card("Temperature layer", '<div class="cf-muted-block"><strong>Observed LST not computed</strong><span>Discover Landsat, assess QA, then calculate LST.</span></div>')
-        card("Data and quality", '<div class="cf-muted-block">Satellite sources, coverage and model status will appear here.</div>')
-    html('<div class="cf-section-head"><div class="cf-subheading">Baseline indicators</div><div class="cf-caption">Proposed metric locations. No values have been calculated.</div></div>')
+        current_thermal_qa = st.session_state.get("landsat_qa_result")
+        current_optical = st.session_state.get("sentinel2_indices")
+        current_ld = st.session_state.get("landsat_discovery_result")
+        current_sd = st.session_state.get("sentinel2_discovery")
+        q_parts = []
+        if current_ld and current_ld.candidate:
+            c = current_ld.candidate
+            q_parts.append(f'<div class="cf-metric-label">Landsat observation</div><div class="cf-note">{html_std.escape(c.observed_utc[:10])} · {c.age_days} days · {c.scene_cloud_pct:.1f}% scene cloud</div>')
+        if current_thermal_qa:
+            q_parts.append(f'<div class="cf-metric-label">Landsat site-level QA</div><div class="cf-note">{html_std.escape(current_thermal_qa.status)} · {current_thermal_qa.site.valid_pixels}/{current_thermal_qa.site.footprint_pixels} delivery pixels · {current_thermal_qa.site.coverage_pct}% valid</div>')
+        if current_sd and current_sd.candidate:
+            c = current_sd.candidate
+            q_parts.append(f'<div class="cf-metric-label">Sentinel-2 observation</div><div class="cf-note">{html_std.escape(c.observed_utc[:10])} · {c.age_days} days · {c.scene_cloud_pct:.1f}% scene cloud</div>')
+        if current_optical:
+            q_parts.append(f'<div class="cf-metric-label">Sentinel-2 site-level QA</div><div class="cf-note">{html_std.escape(current_optical.status)} · {current_optical.valid_pixels}/{current_optical.footprint_pixels} delivery pixels · {current_optical.valid_coverage_pct}% valid</div>')
+        q_parts.append('<div class="cf-caption">LST: 30 m delivery grid, approximately 100 m native thermal support. Optical indices: 20 m grid. Separate acquisition dates; no predictive model or land-cover classification.</div>')
+        card("Data and quality", ''.join(q_parts) if q_parts else '<div class="cf-muted-block">Run Landsat and Sentinel-2 acquisition and QA to populate this panel.</div>')
+    html('<div class="cf-section-head"><div class="cf-subheading">Observed environmental indicators</div><div class="cf-caption">Values are shown only after successful satellite processing. Landsat and Sentinel-2 observations have different dates and spatial supports.</div></div>')
     m1, m2, m3, m4 = st.columns(4)
     active_lst = st.session_state.get("landsat_temperature_result")
+    optical_summary = st.session_state.get("sentinel2_indices")
     observed_ok = active_lst is not None and active_lst.status == "SITE_QA_PASS"
-    with m1: metric("Mean surface temperature", f"{active_lst.mean_c:.1f} °C" if observed_ok else "—", "Observed Landsat overpass; site pixel-centre estimate" if observed_ok else "Awaiting observed LST")
-    with m2: metric("95th-percentile temperature", f"{active_lst.p95_c:.1f} °C" if observed_ok else "—", "Based on valid 30 m delivery pixels; limited thermal independence" if observed_ok else "Awaiting observed LST")
-    with m3: metric("Hot-area proportion", "—", "Not enabled: no absolute hot-surface threshold")
-    with m4: metric("Tree canopy coverage")
+    optical_ok = optical_summary is not None and optical_summary.status == "PRELIMINARY_QA_PASS"
+    with m1: metric("Mean observed LST", f"{active_lst.mean_c:.1f} °C" if observed_ok else "—", "Landsat overpass · " + active_lst.observed_utc[:10] if observed_ok else "Awaiting LST assessment")
+    with m2: metric("95th-percentile LST", f"{active_lst.p95_c:.1f} °C" if observed_ok else "—", "Delivery-grid estimate; ~100 m native thermal support" if observed_ok else "Awaiting LST assessment")
+    with m3: metric("Mean NDVI", f"{optical_summary.ndvi_mean:.3f}" if optical_ok else "—", "Sentinel-2 · " + optical_summary.observed_utc[:10] if optical_ok else "Awaiting optical assessment")
+    with m4: metric("Mean NDBI", f"{optical_summary.ndbi_mean:.3f}" if optical_ok else "—", "Sentinel-2 · not built-up percentage" if optical_ok else "Awaiting optical assessment")
+    st.caption("Observed satellite indicators only. No hot-area threshold, tree-canopy percentage, thermal comfort, or predicted cooling has been calculated.")
 
 with t2:
     st.write("")
@@ -689,4 +730,4 @@ with t3:
         card("Reports and exports · planned",'<div class="cf-outputrow"><span class="cf-action">PDF report</span><span class="cf-action">PNG comparison</span><span class="cf-action">CSV results</span><span class="cf-action">Method note</span></div><div class="cf-divider"></div><div class="cf-caption">All export controls are visual placeholders.</div>')
         card("Scientific interpretation",'<div class="cf-caption">Future reports will distinguish observed satellite inputs, modelled temperature patterns, predicted intervention effects and associated uncertainty.</div>')
 
-html('<div class="cf-footer">ClimaForma v2.4.17 · Increment 4D · Observed Landsat LST and Sentinel-2 indices; cooling predictions disabled · Not suitable for environmental, engineering or investment decisions</div>')
+html('<div class="cf-footer">ClimaForma v2.4.18 · Increment 4E · Observed Landsat LST and Sentinel-2 indices; cooling predictions disabled · Not suitable for environmental, engineering or investment decisions</div>')

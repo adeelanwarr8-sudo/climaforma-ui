@@ -6,6 +6,7 @@ thermal temperature or cooling prediction from these optical observations.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from io import BytesIO
 from datetime import datetime, timedelta, timezone
 import math
 import re
@@ -63,6 +64,9 @@ class IndexSummary:
     ndvi_p90: float | None
     status: str
     notes: tuple[str, ...]
+    ndvi_overlay_png: bytes | None = None
+    ndbi_overlay_png: bytes | None = None
+    overlay_bounds: tuple[tuple[float, float], tuple[float, float]] | None = None
 
 
 def _window(now: datetime, young: int, old: int) -> str:
@@ -195,6 +199,52 @@ def fetch_assets(scene: SentinelCandidate, *, session=None, signer=None):
         raise ValueError('Could not sign Sentinel-2 raster URLs.') from exc
 
 
+def render_index_overlay(values, valid, src_transform, src_crs, *, kind):
+    """Warp a masked 20 m index to WGS84 before rendering transparent PNG.
+
+    This is only a map-display reprojection; it creates no new information.
+    """
+    import rasterio
+    from rasterio.enums import Resampling
+    from rasterio.warp import calculate_default_transform, reproject, transform_bounds
+    from PIL import Image
+    values = np.asarray(values, dtype=np.float32)
+    valid = np.asarray(valid, dtype=bool) & np.isfinite(values)
+    if not valid.any():
+        return None, None
+    height, width = values.shape
+    from rasterio.transform import array_bounds
+    west, south, east, north = array_bounds(height, width, src_transform)
+    dst_transform, dst_width, dst_height = calculate_default_transform(
+        src_crs, 'EPSG:4326', width, height, west, south, east, north)
+    if dst_width * dst_height > MAX_PIXELS * 4:
+        raise ValueError('Index-map display exceeds safety limits.')
+    source_values = np.where(valid, values, -9999.0)
+    target = np.full((dst_height, dst_width), -9999.0, dtype=np.float32)
+    reproject(source_values, target, src_transform=src_transform, src_crs=src_crs,
+              src_nodata=-9999.0, dst_transform=dst_transform, dst_crs='EPSG:4326',
+              dst_nodata=-9999.0, resampling=Resampling.nearest)
+    target_valid = (target != -9999.0) & np.isfinite(target)
+    if kind == 'NDVI':
+        # brown -> cream -> green. Fixed scale across observations.
+        anchors = np.array([[-1, [130, 84, 59]], [0, [235, 226, 189]], [0.4, [107, 169, 103]], [1, [26, 105, 69]]], dtype=object)
+    elif kind == 'NDBI':
+        # teal -> cream -> reddish brown. Fixed scale across observations.
+        anchors = np.array([[-1, [50, 120, 132]], [0, [233, 232, 208]], [0.4, [180, 103, 70]], [1, [125, 55, 45]]], dtype=object)
+    else:
+        raise ValueError('Unsupported optical index.')
+    x = np.clip(target, -1, 1)
+    levels = [float(r[0]) for r in anchors]
+    colors = np.stack([np.interp(x, levels, [r[1][j] for r in anchors]) for j in range(3)], axis=-1).astype(np.uint8)
+    alpha = np.where(target_valid, 195, 0).astype(np.uint8)
+    with BytesIO() as buf:
+        Image.fromarray(np.dstack([colors, alpha]), 'RGBA').save(buf, format='PNG')
+        png = buf.getvalue()
+    from rasterio.transform import array_bounds
+    w, s, e, n = array_bounds(dst_height, dst_width, dst_transform)
+    return png, ((s, w), (n, e))
+
+
 def assess_sentinel(scene: SentinelCandidate, boundary_geom: dict, buffer_m: int,
                     *, session=None, signer=None) -> IndexSummary:
     from contextlib import ExitStack
@@ -237,6 +287,8 @@ def assess_sentinel(scene: SentinelCandidate, boundary_geom: dict, buffer_m: int
             ndvi, ndbi, valid = compute_indices(
                 aligned['B04'], aligned['B08'], aligned['B11'], aligned['SCL'], footprint)
             total, good = int(footprint.sum()), int(valid.sum())
+            ndvi_png, ndvi_bounds = render_index_overlay(ndvi, valid, transform, grid.crs, kind='NDVI')
+            ndbi_png, ndbi_bounds = render_index_overlay(ndbi, valid, transform, grid.crs, kind='NDBI')
     except ValueError:
         raise
     except Exception as exc:
@@ -258,4 +310,4 @@ def assess_sentinel(scene: SentinelCandidate, boundary_geom: dict, buffer_m: int
                             'Processing baseline >=04.00: BOA_ADD_OFFSET=-1000, quantification=10000.',
                             'SCL classes 2,4,5,6,7 retained; class 7 is unclassified and uncertain.',
                             'One satellite tile and one scene only; no compositing, fallback after site QA failure, or independent validation.',
-                        ))
+                        ), ndvi_png, ndbi_png, ndvi_bounds)
