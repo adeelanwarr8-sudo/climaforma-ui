@@ -14,7 +14,7 @@ SHOWCASE_FILES = {
     "Barcelona · Selected construction site": "BARCELONA_SITE.geojson",
     "Vienna · Selected construction site": "VIENNA_SITE.geojson",
 }
-_DATA_DIR = Path(__file__).resolve().parent / "showcase_data"
+_DATA_DIR = Path(__file__).resolve().parent  # GeoJSON files stored in repository root
 
 
 def showcase_boundary(city: str) -> BoundaryInfo:
