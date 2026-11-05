@@ -68,6 +68,33 @@ def _valid_polygon(geom: Any):
     return polygon if polygon.area > 0 else None
 
 
+def _validate_geojson_crs(crs: Any) -> None:
+    """Accept legacy GeoJSON CRS labels only when they mean WGS84 lon/lat.
+
+    RFC 7946 GeoJSON normally omits `crs`; many GIS exporters still emit the
+    older OGC CRS84 designation. Do not silently accept projected CRS values.
+    """
+    if crs is None:
+        return
+    if not isinstance(crs, dict) or crs.get('type') != 'name':
+        raise ValueError('Unsupported GeoJSON CRS declaration; use WGS84 longitude/latitude (CRS84).')
+    props = crs.get('properties')
+    name = props.get('name') if isinstance(props, dict) else None
+    if not isinstance(name, str):
+        raise ValueError('Unsupported GeoJSON CRS declaration; use WGS84 longitude/latitude (CRS84).')
+    label = name.strip().upper()
+    accepted = {
+        'URN:OGC:DEF:CRS:OGC:1.3:CRS84',
+        'OGC:CRS84',
+        'CRS84',
+        'EPSG:4326',
+        'URN:OGC:DEF:CRS:EPSG::4326',
+        'HTTP://WWW.OPENGIS.NET/DEF/CRS/OGC/1.3/CRS84',
+    }
+    if label not in accepted:
+        raise ValueError(f'Unsupported GeoJSON CRS: {name}. Export as WGS84 longitude/latitude (CRS84 / EPSG:4326).')
+
+
 def process_geojson_bytes(data: bytes, boundary_geom: dict) -> VectorData:
     """Validate and clip polygons to the active site, without inferring their class."""
     if not data or len(data) > MAX_UPLOAD_BYTES:
@@ -78,8 +105,7 @@ def process_geojson_bytes(data: bytes, boundary_geom: dict) -> VectorData:
         raise ValueError('File must contain valid UTF-8 GeoJSON.') from exc
     if not isinstance(collection, dict):
         raise ValueError('Expected a GeoJSON FeatureCollection.')
-    if collection.get('crs') is not None:
-        raise ValueError('GeoJSON CRS declaration is not supported; supply WGS84 (EPSG:4326).')
+    _validate_geojson_crs(collection.get('crs'))
     if collection.get('type') != 'FeatureCollection' or not isinstance(collection.get('features'), list):
         raise ValueError('Only GeoJSON FeatureCollection is supported.')
     incoming = collection['features']
