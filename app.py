@@ -1,7 +1,7 @@
-"""ClimaForma v2.4 — Increment 3: bounded vector data acquisition.
+"""ClimaForma v2.4.12 — Increment 4A: Landsat metadata discovery.
 
-Project selection, map navigation and single site-boundary geometry are active.
-Satellite imagery analysis, science engine and intervention functions remain disabled.
+Site mapping, showcase boundaries, vector context and address navigation remain.
+Satellite raster processing and the scientific modelling engine remain disabled.
 """
 
 import html as html_std
@@ -15,6 +15,7 @@ from site_mapping import (BoundaryInfo, SHOWCASE_CENTERS, DEFAULT_CENTER,
 from geo_data import fetch_osm_buildings, process_geojson_bytes
 from address_lookup import search_addresses
 from showcase_sites import showcase_boundary, SHOWCASE_FILES
+from satellite_discovery import discover_landsat
 from buffer_geometry import (create_analysis_buffer, BUFFER_MIN_M, BUFFER_MAX_M,
                              BUFFER_DEFAULT_M, BUFFER_STEP_M)
 
@@ -137,7 +138,7 @@ SHOWCASES = tuple(SHOWCASE_FILES)
 def selected_site_summary(mode: str, showcase: str, address: str) -> tuple[str, str, str]:
     """Present the selected location and site information."""
     if mode == "Showcase site":
-        return showcase, "Illustrative 120 m × 120 m demonstration AOI · not a verified land parcel", "Demo AOI"
+        return showcase, "User-supplied demonstration boundary · construction and parcel status unverified", "Demo AOI"
     if mode == "Address lookup":
         return (address.strip() or "No address selected"), "Address location is a navigation reference; draw the site boundary separately", "Address location"
     if address:
@@ -147,7 +148,7 @@ def selected_site_summary(mode: str, showcase: str, address: str) -> tuple[str, 
 
 with st.sidebar:
     html('<div class="cf-brand">◈ ClimaForma</div><div class="cf-brandline">Climate-responsive design intelligence</div>')
-    html('<span class="cf-pill">V2.4.10 · ADDRESS NAVIGATION</span>')
+    html('<span class="cf-pill">V2.4.12 · INCREMENT 4A</span>')
     st.divider()
     html('<div class="cf-step">01 · Project information</div>')
     st.text_input("Project name", value="Untitled climate design study", key="project_name", max_chars=100,
@@ -159,7 +160,7 @@ with st.sidebar:
     if site_mode == "Showcase site":
         showcase_city = st.selectbox("Showcase city", SHOWCASES, key="showcase_city")
         address_draft = ""
-        st.caption("A 120 m × 120 m illustrative demonstration AOI loads automatically. It is not a verified property boundary.")
+        st.caption("Your supplied demonstration site polygon loads automatically. Construction and parcel status are unverified.")
     elif site_mode == "Address lookup":
         showcase_city = SHOWCASES[0]
         address_draft = st.text_input("Address or place", key="address_draft", max_chars=180,
@@ -208,8 +209,8 @@ with st.sidebar:
     st.caption("0 m = site only · 100 m default · 300 m maximum. Not a predicted cooling distance.")
     st.divider()
     html('<div class="cf-step">04 · Application status</div>')
-    html('<div class="cf-quiet"><strong>Increment 3 active</strong><div class="cf-caption">Site drawing and optional polygon-layer acquisition are available. Satellite processing and scientific models remain disconnected.</div></div>')
-    st.caption("ClimaForma v2.4.10 · Address navigation, showcase AOIs and spatial buffer")
+    html('<div class="cf-quiet"><strong>Increment 4A active</strong><div class="cf-caption">Landsat scene metadata discovery is available. Thermal rasters and scientific models remain disconnected.</div></div>')
+    st.caption("ClimaForma v2.4.12 · Landsat scene discovery (metadata only)")
 
 # Preserve the geocoded location when moving between Address lookup and
 # Draw site boundary. Both modes refer to the same user-selected location.
@@ -324,7 +325,7 @@ site_kind_safe = html_std.escape(site_kind)
 project_label_safe = html_std.escape(project_label)
 
 html('<div class="cf-kicker">Architecture · Landscape · Climate adaptation</div><div class="cf-heading">Design cooler places, with clarity.</div><div class="cf-lede">A visual workspace for exploring site conditions, shaping climate-responsive design alternatives, and reviewing comparative outcomes.</div>')
-html(f'<div class="cf-quiet"><strong>Project:</strong> {project_label_safe} &nbsp; · &nbsp; <strong>Site:</strong> {site_title_safe} &nbsp; · &nbsp; Interactive site mapping only · No environmental analysis</div>')
+html(f'<div class="cf-quiet"><strong>Project:</strong> {project_label_safe} &nbsp; · &nbsp; <strong>Site:</strong> {site_title_safe} &nbsp; · &nbsp; Scene discovery only · No temperature analysis</div>')
 
 t1, t2, t3 = st.tabs(["01  Existing Site", "02  Design Options", "03  Compare Options"])
 
@@ -432,6 +433,40 @@ with t1:
                     st.rerun()
                 st.caption("Use the layer selector to show or hide context features. "
                            "The site boundary remains independent of this context layer.")
+        html('<div class="cf-section-head"><div class="cf-subheading">Landsat 8/9 · Recent scene discovery · Increment 4A</div><div class="cf-caption">Query Microsoft Planetary Computer for observation metadata. No satellite raster download, temperature estimates or site-pixel quality checks.</div></div>')
+        # Record which exact site geometry and buffer generated any prior result.
+        import json as _json
+        signature = (_json.dumps(current_site.geometry, sort_keys=True), analysis_buffer_m) if current_site else None
+        if st.session_state.get("landsat_query_signature") != signature:
+            st.session_state.pop("landsat_discovery_result", None)
+            st.session_state["landsat_query_signature"] = signature
+        if current_site is None:
+            st.info("Select or draw a site boundary to search for Landsat observations.")
+        else:
+            st.caption("Search order: 3–7 days → 8–15 days → 16–30 days → 31–45 days. Maximum age: 45 days. "
+                       f"Search footprint: selected site plus {analysis_buffer_m} m buffer.")
+            if st.button("Find recent Landsat 8/9 scenes", key="discover_landsat", use_container_width=True):
+                try:
+                    with st.spinner("Searching Landsat scene metadata…"):
+                        st.session_state["landsat_discovery_result"] = discover_landsat(current_site.geometry, analysis_buffer_m)
+                except ValueError as exc:
+                    st.session_state.pop("landsat_discovery_result", None)
+                    st.error(str(exc))
+            discovery = st.session_state.get("landsat_discovery_result")
+            if discovery is not None:
+                if discovery.candidate:
+                    candidate = discovery.candidate
+                    st.success(f"Candidate identified: {candidate.platform.upper()} · {candidate.age_days} days old · {candidate.tier} tier")
+                    st.write(f"**Acquisition (UTC):** {candidate.observed_utc}  |  **Scene-wide cloud:** {candidate.scene_cloud_pct:.1f}%")
+                    st.code(candidate.item_id, language=None)
+                    st.caption(f"Collection: {candidate.collection} · Thermal metadata asset: {candidate.thermal_asset} · "
+                               f"Search performed: {discovery.searched_at_utc}")
+                    st.warning("Preliminary metadata candidate only. Cloud percentage describes the Landsat scene, "
+                               "not your specific site. Raster access, pixel-validity and site-specific cloud screening are pending.")
+                else:
+                    st.warning("No qualifying Landsat 8/9 scene metadata found within the permitted 3–45-day windows.")
+                for note in discovery.notes:
+                    st.caption(note)
         card("Surface-cover categories", '<div class="cf-legend"><i class="cf-dot" style="background:#8faba6"></i>Building</div><div class="cf-legend"><i class="cf-dot" style="background:#c6c0b2"></i>Paved surfaces</div><div class="cf-legend"><i class="cf-dot" style="background:#559a74"></i>Tree canopy</div><div class="cf-legend"><i class="cf-dot" style="background:#a8c9a2"></i>Grass / planting</div><div class="cf-legend"><i class="cf-dot" style="background:#86bfc7"></i>Water</div><div class="cf-legend"><i class="cf-dot" style="background:#cfb99c"></i>Bare soil</div><div class="cf-caption">Legend illustrates planned categories; no land-cover classification has been performed.</div>')
     with aside:
         boundary = st.session_state.get("boundary_info")
@@ -513,4 +548,4 @@ with t3:
         card("Reports and exports · planned",'<div class="cf-outputrow"><span class="cf-action">PDF report</span><span class="cf-action">PNG comparison</span><span class="cf-action">CSV results</span><span class="cf-action">Method note</span></div><div class="cf-divider"></div><div class="cf-caption">All export controls are visual placeholders.</div>')
         card("Scientific interpretation",'<div class="cf-caption">Future reports will distinguish observed satellite inputs, modelled temperature patterns, predicted intervention effects and associated uncertainty.</div>')
 
-html('<div class="cf-footer">ClimaForma v2.4.4 · Increment 3.1 · Project and site drafts active; scientific controls disabled · Not suitable for environmental, engineering or investment decisions</div>')
+html('<div class="cf-footer">ClimaForma v2.4.12 · Increment 4A · Landsat scene metadata only; temperature and predictive modelling disabled · Not suitable for environmental, engineering or investment decisions</div>')
