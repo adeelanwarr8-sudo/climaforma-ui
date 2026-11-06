@@ -1,4 +1,4 @@
-"""ClimaForma v2.4.18 — Barcelona MVP · Increment 4E: Landsat raster access and QA.
+"""ClimaForma v2.4.20 — Barcelona MVP · Increment 5B: spatial intervention drawing.
 
 Site mapping, showcase boundaries, vector context and address navigation remain.
 Thermal pixel quality assessment is enabled; temperature modelling is disabled.
@@ -14,6 +14,9 @@ from site_mapping import (BoundaryInfo, SHOWCASE_CENTERS, DEFAULT_CENTER,
                           boundary_from_drawings, same_boundary, boundary_preview_svg)
 from geo_data import fetch_osm_buildings, process_geojson_bytes
 from design_options import add_option, rename_option, duplicate_option, delete_option, new_option, MAX_OPTIONS
+from interventions import (INTERVENTION_TYPES, INTERVENTION_COLORS, MAX_INTERVENTIONS,
+                           make_intervention, append_intervention, remove_intervention,
+                           summarize_interventions)
 from address_lookup import search_addresses
 from showcase_sites import showcase_boundary, SHOWCASE_FILES
 from satellite_discovery import discover_landsat
@@ -152,7 +155,7 @@ def selected_site_summary(mode: str, showcase: str, address: str) -> tuple[str, 
 
 with st.sidebar:
     html('<div class="cf-brand">◈ ClimaForma</div><div class="cf-brandline">Climate-responsive design intelligence</div>')
-    html('<span class="cf-pill">V2.4.19 · INCREMENT 5A</span>')
+    html('<span class="cf-pill">V2.4.20 · INCREMENT 5B</span>')
     st.divider()
     html('<div class="cf-step">01 · Project information</div>')
     st.text_input("Project name", value="Untitled climate design study", key="project_name", max_chars=100,
@@ -214,8 +217,8 @@ with st.sidebar:
     st.caption("0 m = site only · 100 m default · 300 m maximum. Not a predicted cooling distance.")
     st.divider()
     html('<div class="cf-step">04 · Application status</div>')
-    html('<div class="cf-quiet"><strong>Increment 5A active</strong><div class="cf-caption">Landsat thermal QA and Sentinel-2 optical indices are available. Integrated observed LST and Sentinel-2 index maps are available after QA; predictions remain disabled.</div></div>')
-    st.caption("ClimaForma v2.4.19 · Barcelona showcase · Landsat QA + Sentinel-2 optical indices")
+    html('<div class="cf-quiet"><strong>Increment 5B active</strong><div class="cf-caption">Landsat thermal QA and Sentinel-2 optical indices are available. Integrated observed LST and Sentinel-2 index maps are available after QA; predictions remain disabled.</div></div>')
+    st.caption("ClimaForma v2.4.20 · Barcelona showcase · Landsat QA + Sentinel-2 optical indices")
 
 # Preserve the geocoded location when moving between Address lookup and
 # Draw site boundary. Both modes refer to the same user-selected location.
@@ -690,7 +693,7 @@ if st.session_state.get("design_site_signature") != _design_site_signature:
 
 with t2:
     st.write("")
-    html('<div class="cf-subheading">Design Options</div><div class="cf-intro">Manage independent design alternatives for the selected site. Drawing, intervention quantities and cooling predictions remain disabled in Increment 5A.</div>')
+    html('<div class="cf-subheading">Design Options</div><div class="cf-intro">Manage independent design alternatives for the selected site. Draw point trees and polygon interventions within the active site. Quantities are geometric only; cooling predictions remain disabled.</div>')
     if _design_site_signature is None:
         st.info("Define a site boundary in Existing Site before creating design options.")
     else:
@@ -765,23 +768,101 @@ with t2:
                     if st.button("Cancel", key="cancel_design_delete"):
                         st.session_state.pop("pending_design_delete", None)
                         st.rerun()
-        st.caption(f"{len(options)} of {MAX_OPTIONS} design options · Stored in this Streamlit session only · No design geometry yet")
+        st.caption(f"{len(options)} of {MAX_OPTIONS} design options · Stored in this Streamlit session only · Intervention drawing available")
     left, right = st.columns([1.02, 1.58], gap="large")
     with left:
-        html('<div class="cf-eyebrow">Intervention controls · next increment</div>')
-        st.selectbox("Design template", ["Green courtyard", "Cool paving", "Tree-lined streets", "Custom design"], disabled=True)
-        st.slider("Additional tree canopy (% of site)", 0, 40, 20, disabled=True)
-        st.slider("Grass / planting (% of site)", 0, 40, 15, disabled=True)
-        st.slider("Reflective / cool paving (% of site)", 0, 100, 25, disabled=True)
-        st.caption("These controls are inactive placeholders. No values are stored as interventions.")
+        html('<div class="cf-eyebrow">Increment 5B · Spatial interventions</div>')
+        st.caption("Select the active design option, choose the intervention type, then draw one geometry at a time on the design map. Interventions must remain entirely within the site.")
+        chosen_kind = st.selectbox("Intervention type", list(INTERVENTION_TYPES), key="design_intervention_kind")
+        expected_draw = INTERVENTION_TYPES[chosen_kind]
+        st.caption("Use the marker tool for a tree point." if expected_draw == "point" else
+                   "Use the polygon or rectangle tool to delineate the proposed intervention area.")
+        if _design_site_signature and active_option is not None:
+            proposed = active_option["interventions"]
+            totals = summarize_interventions(proposed)
+            st.metric("Proposed tree locations", totals["trees"])
+            st.metric("Total drawn polygon area", f'{totals["total_polygon_m2"]:,.1f} m²')
+            st.caption("Areas are summed across drawings; overlapping polygons may be counted twice. No assumed canopy footprint or cooling benefit.")
+            st.write(f'**{totals["count"]} interventions** in this option (maximum {MAX_INTERVENTIONS}).')
+            for entry in proposed:
+                label = (f'{entry["type"]} · point' if entry["tree_count"] else
+                         f'{entry["type"]} · {entry["area_m2"]:,.1f} m²')
+                a, b = st.columns([3.2, 1])
+                with a:
+                    st.caption(label)
+                with b:
+                    if st.button("Remove", key=f'remove_intervention_{selected_id}_{entry["id"]}'):
+                        st.session_state["design_options"] = remove_intervention(
+                            st.session_state["design_options"], selected_id, entry["id"])
+                        st.session_state["design_map_generation"] = st.session_state.get("design_map_generation", 0) + 1
+                        st.rerun()
+        else:
+            st.info("Create and select an option before drawing interventions.")
     with right:
         card("Selected site · shared boundary", boundary_preview_svg(st.session_state.get("boundary_info")) +
-             '<div class="cf-caption">Design options refer to this exact site boundary.</div>')
+             '<div class="cf-caption">Intervention geometry is checked against this site boundary.</div>')
         current_name = html_std.escape(active_option["name"]) if _design_site_signature and active_option is not None else "No option selected"
-        html(f'<div class="cf-quiet"><strong>Active option:</strong> {current_name} · No intervention geometries or scenario calculations.</div>')
-        html(site_illustration("green"))
-        card("Design drawing · next increment", '<div class="cf-muted-block">Intervention drawing and GIS import are not enabled yet.</div>')
-        card("Scientific status", '<div class="cf-muted-block">No cooling effect or cost predictions are generated.</div>')
+        html(f'<div class="cf-quiet"><strong>Active option:</strong> {current_name} · Geometric design proposals only, no modeled cooling or cost.</div>')
+        if _design_site_signature and active_option is not None:
+            design_boundary = st.session_state["boundary_info"]
+            # The intervention Draw group is separate from the Existing Site map's
+            # editable site-boundary group. Existing designs are read-only on this
+            # map and can be individually removed using the list at left.
+            design_map = folium.Map(
+                location=[design_boundary.latitude, design_boundary.longitude],
+                zoom_start=17, tiles="OpenStreetMap", control_scale=True,
+            )
+            west, south, east, north = design_boundary.bounds
+            design_map.fit_bounds([[south, west], [north, east]])
+            folium.GeoJson(design_boundary.geometry, name="Project site boundary",
+                style_function=lambda _: {"color":"#087c6e","weight":3,"fillOpacity":0.04}).add_to(design_map)
+            for entry in active_option["interventions"]:
+                color = INTERVENTION_COLORS[entry["type"]]
+                geometry = entry["geometry"]
+                if entry["tree_count"]:
+                    lon, lat = geometry["coordinates"][:2]
+                    folium.CircleMarker([lat, lon], radius=6, color=color, fill=True,
+                                        fill_opacity=0.9, tooltip=entry["type"]).add_to(design_map)
+                else:
+                    folium.GeoJson(geometry, name=entry["type"],
+                                   style_function=lambda _, color=color: {
+                                       "color":color, "weight":2, "fillColor":color, "fillOpacity":0.35},
+                                   tooltip=entry["type"]).add_to(design_map)
+            draw_group = folium.FeatureGroup(name="New intervention drawing")
+            draw_group.add_to(design_map)
+            Draw(feature_group=draw_group, position="topleft", export=False,
+                 draw_options={"polyline":False, "circle":False,"circlemarker":False,
+                               "marker":expected_draw == "point",
+                               "polygon":{"allowIntersection":False} if expected_draw == "polygon" else False,
+                               "rectangle":expected_draw == "polygon"},
+                 edit_options={"edit":True,"remove":True}).add_to(design_map)
+            folium.LayerControl(collapsed=True).add_to(design_map)
+            map_key = (f'design_map_{selected_id}_{chosen_kind}_'
+                       f'{st.session_state.get("design_map_generation",0)}')
+            drawn_response = st_folium(design_map, height=460, width=None,
+                                     use_container_width=True, key=map_key,
+                                     returned_objects=["all_drawings"])
+            pending_drawings = drawn_response.get("all_drawings") if isinstance(drawn_response, dict) else None
+            if pending_drawings:
+                if len(pending_drawings) > 1:
+                    st.warning("Save one drawing at a time. Remove extra new shapes using the drawing toolbar.")
+                else:
+                    try:
+                        candidate = make_intervention(pending_drawings[0], chosen_kind,
+                                                       design_boundary.geometry)
+                        st.session_state["design_options"] = append_intervention(
+                            st.session_state["design_options"], selected_id, candidate)
+                        # Force a fresh draw group after saving, so the new
+                        # shape is not captured a second time on a rerun.
+                        st.session_state["design_map_generation"] = st.session_state.get("design_map_generation",0) + 1
+                        st.rerun()
+                    except (ValueError, TypeError, KeyError) as exc:
+                        st.warning(f"Intervention not accepted: {exc}")
+                        st.caption("Use the map edit/delete controls or remove the drawing and redraw it.")
+            st.caption("Saved intervention shapes are shown on the design map. To revise a saved shape, remove it from the list and redraw it. This does not modify the original site boundary.")
+        else:
+            st.info("Define a site in Existing Site and create an option to activate the design map.")
+        card("Scientific status", '<div class="cf-muted-block">Intervention geometry and quantities only. Cooling predictions and costs remain disabled.</div>')
 
 with t3:
     st.write("")
@@ -810,4 +891,4 @@ with t3:
         card("Reports and exports · planned",'<div class="cf-outputrow"><span class="cf-action">PDF report</span><span class="cf-action">PNG comparison</span><span class="cf-action">CSV results</span><span class="cf-action">Method note</span></div><div class="cf-divider"></div><div class="cf-caption">All export controls are visual placeholders.</div>')
         card("Scientific interpretation",'<div class="cf-caption">Future reports will distinguish observed satellite inputs, modelled temperature patterns, predicted intervention effects and associated uncertainty.</div>')
 
-html('<div class="cf-footer">ClimaForma v2.4.19 · Increment 5A · Observed Landsat LST and Sentinel-2 indices; cooling predictions disabled · Not suitable for environmental, engineering or investment decisions</div>')
+html('<div class="cf-footer">ClimaForma v2.4.20 · Increment 5B · Observed Landsat LST and Sentinel-2 indices; cooling predictions disabled · Not suitable for environmental, engineering or investment decisions</div>')
