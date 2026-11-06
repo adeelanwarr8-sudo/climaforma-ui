@@ -13,6 +13,7 @@ from streamlit_folium import st_folium
 from site_mapping import (BoundaryInfo, SHOWCASE_CENTERS, DEFAULT_CENTER,
                           boundary_from_drawings, same_boundary, boundary_preview_svg)
 from geo_data import fetch_osm_buildings, process_geojson_bytes
+from design_options import add_option, rename_option, duplicate_option, delete_option, new_option, MAX_OPTIONS
 from address_lookup import search_addresses
 from showcase_sites import showcase_boundary, SHOWCASE_FILES
 from satellite_discovery import discover_landsat
@@ -151,7 +152,7 @@ def selected_site_summary(mode: str, showcase: str, address: str) -> tuple[str, 
 
 with st.sidebar:
     html('<div class="cf-brand">◈ ClimaForma</div><div class="cf-brandline">Climate-responsive design intelligence</div>')
-    html('<span class="cf-pill">V2.4.17 · INCREMENT 4D</span>')
+    html('<span class="cf-pill">V2.4.19 · INCREMENT 5A</span>')
     st.divider()
     html('<div class="cf-step">01 · Project information</div>')
     st.text_input("Project name", value="Untitled climate design study", key="project_name", max_chars=100,
@@ -213,8 +214,8 @@ with st.sidebar:
     st.caption("0 m = site only · 100 m default · 300 m maximum. Not a predicted cooling distance.")
     st.divider()
     html('<div class="cf-step">04 · Application status</div>')
-    html('<div class="cf-quiet"><strong>Increment 4E active</strong><div class="cf-caption">Landsat thermal QA and Sentinel-2 optical indices are available. Integrated observed LST and Sentinel-2 index maps are available after QA; predictions remain disabled.</div></div>')
-    st.caption("ClimaForma v2.4.18 · Barcelona showcase · Landsat QA + Sentinel-2 optical indices")
+    html('<div class="cf-quiet"><strong>Increment 5A active</strong><div class="cf-caption">Landsat thermal QA and Sentinel-2 optical indices are available. Integrated observed LST and Sentinel-2 index maps are available after QA; predictions remain disabled.</div></div>')
+    st.caption("ClimaForma v2.4.19 · Barcelona showcase · Landsat QA + Sentinel-2 optical indices")
 
 # Preserve the geocoded location when moving between Address lookup and
 # Draw site boundary. Both modes refer to the same user-selected location.
@@ -673,49 +674,128 @@ with t1:
     with m4: metric("Mean NDBI", f"{optical_summary.ndbi_mean:.3f}" if optical_ok else "—", "Sentinel-2 · not built-up percentage" if optical_ok else "Awaiting optical assessment")
     st.caption("Observed satellite indicators only. No hot-area threshold, tree-canopy percentage, thermal comfort, or predicted cooling has been calculated.")
 
+# Site-specific option state: a different geographical boundary creates a fresh
+# option workspace. Buffer-only changes must not affect design-option names.
+_current_design_boundary = st.session_state.get("boundary_info")
+_design_site_signature = (_site_json.dumps(_current_design_boundary.geometry, sort_keys=True)
+                          if _current_design_boundary is not None else None)
+if st.session_state.get("design_site_signature") != _design_site_signature:
+    st.session_state["design_site_signature"] = _design_site_signature
+    st.session_state["design_options"] = ([new_option("Option A · Untitled design")]
+                                          if _design_site_signature is not None else [])
+    st.session_state.pop("pending_design_delete", None)
+    st.session_state.pop("design_option_selector", None)
+    st.session_state["selected_design_id"] = (st.session_state["design_options"][0]["id"]
+                                               if st.session_state["design_options"] else None)
+
 with t2:
     st.write("")
-    html('<div class="cf-subheading">Design Options</div><div class="cf-intro">Review the future configuration workflow for landscape, surface materials and built shade. Scientific and design controls are currently disabled.</div>')
-    head1,head2,head3=st.columns([1.2,1.4,1])
-    with head1: st.selectbox("Option being reviewed",["Option A · Green courtyard","Option B · Cool surfaces"],disabled=True)
-    with head2: st.text_input("Option name",value="Option A · Green courtyard",disabled=True)
-    with head3:
-        html('<div class="cf-minihead">Option actions · preview</div><span class="cf-chip">＋ New</span><span class="cf-chip">Copy</span><span class="cf-chip">Delete</span>')
-    left,right=st.columns([1.02,1.58],gap="large")
+    html('<div class="cf-subheading">Design Options</div><div class="cf-intro">Manage independent design alternatives for the selected site. Drawing, intervention quantities and cooling predictions remain disabled in Increment 5A.</div>')
+    if _design_site_signature is None:
+        st.info("Define a site boundary in Existing Site before creating design options.")
+    else:
+        options = st.session_state["design_options"]
+        option_ids = [item["id"] for item in options]
+        selected_id = st.session_state.get("selected_design_id")
+        if selected_id not in option_ids:
+            selected_id = option_ids[0] if option_ids else None
+            st.session_state["selected_design_id"] = selected_id
+        if options:
+            selected_id = st.selectbox(
+                "Active design option", options=option_ids,
+                index=option_ids.index(selected_id),
+                format_func=lambda oid: next(x["name"] for x in options if x["id"] == oid),
+                key="design_option_selector",
+            )
+            st.session_state["selected_design_id"] = selected_id
+            active_option = next(x for x in options if x["id"] == selected_id)
+        else:
+            st.info("No design options yet. Create an option to begin.")
+            active_option = None
+        with st.expander("Create a new design option", expanded=not options):
+            with st.form("design_create_form", clear_on_submit=True):
+                name_new = st.text_input("New option name", value="", max_chars=64,
+                                         placeholder="e.g., Green courtyard")
+                create_submitted = st.form_submit_button("Create option", disabled=len(options) >= MAX_OPTIONS)
+            if create_submitted:
+                try:
+                    updated, new_id = add_option(options, name_new)
+                    st.session_state["design_options"] = updated
+                    st.session_state["selected_design_id"] = new_id
+                    st.session_state.pop("design_option_selector", None)
+                    st.rerun()
+                except ValueError as exc:
+                    st.error(str(exc))
+        if active_option is not None:
+            with st.form(f"rename_design_{selected_id}"):
+                name_edited = st.text_input("Option name", value=active_option["name"], max_chars=64)
+                rename_submitted = st.form_submit_button("Save name")
+            if rename_submitted:
+                try:
+                    st.session_state["design_options"] = rename_option(options, selected_id, name_edited)
+                    st.rerun()
+                except ValueError as exc:
+                    st.error(str(exc))
+            actions_left, actions_right = st.columns(2)
+            with actions_left:
+                if st.button("Duplicate option", key="duplicate_design", use_container_width=True,
+                             disabled=len(options) >= MAX_OPTIONS):
+                    try:
+                        updated, new_id = duplicate_option(options, selected_id)
+                        st.session_state["design_options"] = updated
+                        st.session_state["selected_design_id"] = new_id
+                        st.rerun()
+                    except ValueError as exc:
+                        st.error(str(exc))
+            with actions_right:
+                if st.button("Delete option", key="request_delete_design", use_container_width=True):
+                    st.session_state["pending_design_delete"] = selected_id
+            if st.session_state.get("pending_design_delete") == selected_id:
+                st.warning(f"Delete '{active_option['name']}'? This cannot be undone within this session.")
+                confirm_col, cancel_col = st.columns(2)
+                with confirm_col:
+                    if st.button("Confirm delete", key="confirm_design_delete", type="primary"):
+                        updated, new_selected = delete_option(options, selected_id)
+                        st.session_state["design_options"] = updated
+                        st.session_state["selected_design_id"] = new_selected
+                        st.session_state.pop("design_option_selector", None)
+                        st.session_state.pop("pending_design_delete", None)
+                        st.rerun()
+                with cancel_col:
+                    if st.button("Cancel", key="cancel_design_delete"):
+                        st.session_state.pop("pending_design_delete", None)
+                        st.rerun()
+        st.caption(f"{len(options)} of {MAX_OPTIONS} design options · Stored in this Streamlit session only · No design geometry yet")
+    left, right = st.columns([1.02, 1.58], gap="large")
     with left:
-        html('<div class="cf-eyebrow">01 · Intervention presets</div>')
-        st.selectbox("Design template",["Green courtyard","Cool paving","Tree-lined streets","Custom design"],disabled=True)
-        html('<div class="cf-divider"></div><div class="cf-eyebrow">02 · Vegetation and landscape</div>')
-        st.slider("Additional tree canopy (% of site)",0,40,20,disabled=True)
-        st.slider("Grass / planting (% of site)",0,40,15,disabled=True)
-        st.slider("Water feature (% of site)",0,10,0,disabled=True)
-        html('<div class="cf-divider"></div><div class="cf-eyebrow">03 · Materials and surface treatments</div>')
-        st.slider("Reflective / cool paving (% of site)",0,100,25,disabled=True)
-        st.slider("Permeable paving (% of site)",0,80,10,disabled=True)
-        html('<div class="cf-divider"></div><div class="cf-eyebrow">04 · Shade and built interventions</div>')
-        st.slider("Shade structures (% of site)",0,60,10,disabled=True)
-        st.slider("Cool roof treatment (% of roof)",0,100,0,disabled=True)
+        html('<div class="cf-eyebrow">Intervention controls · next increment</div>')
+        st.selectbox("Design template", ["Green courtyard", "Cool paving", "Tree-lined streets", "Custom design"], disabled=True)
+        st.slider("Additional tree canopy (% of site)", 0, 40, 20, disabled=True)
+        st.slider("Grass / planting (% of site)", 0, 40, 15, disabled=True)
+        st.slider("Reflective / cool paving (% of site)", 0, 100, 25, disabled=True)
+        st.caption("These controls are inactive placeholders. No values are stored as interventions.")
     with right:
-        html('<div class="cf-eyebrow">Design canvas</div><div class="cf-intro">Option A · Green courtyard — conceptual layout only</div>')
         card("Selected site · shared boundary", boundary_preview_svg(st.session_state.get("boundary_info")) +
-             '<div class="cf-caption">This is the selected site geometry from Existing Site. '
-             'Design interventions remain illustrative and disabled.</div>')
+             '<div class="cf-caption">Design options refer to this exact site boundary.</div>')
+        current_name = html_std.escape(active_option["name"]) if _design_site_signature and active_option is not None else "No option selected"
+        html(f'<div class="cf-quiet"><strong>Active option:</strong> {current_name} · No intervention geometries or scenario calculations.</div>')
         html(site_illustration("green"))
-        card("Sketch tools · planned", '<div class="cf-viewbar"><span class="cf-view">Tree canopy</span><span class="cf-view">Planting polygon</span><span class="cf-view">Cool paving</span><span class="cf-view">Water</span><span class="cf-view">Shade</span><span class="cf-view">Erase</span></div><div class="cf-muted-block">Future map drawing and DXF / GeoJSON import workspace<br><strong>No drawing, upload or editing is enabled</strong></div>')
-        card("Design summary · illustrative", '<div class="cf-bar-row"><div class="cf-bar-name">Tree canopy</div><div class="cf-bar-track"><div class="cf-bar-fill" style="width:62%"></div></div></div><div class="cf-bar-row"><div class="cf-bar-name">Vegetation</div><div class="cf-bar-track"><div class="cf-bar-fill" style="width:48%"></div></div></div><div class="cf-bar-row"><div class="cf-bar-name">Cool materials</div><div class="cf-bar-track"><div class="cf-bar-fill" style="width:35%"></div></div></div><div class="cf-caption">Decorative bars. Not intervention quantities or calculated results.</div>')
-        card("Scientific status",'<div class="cf-muted-block">Predicted cooling, surface-temperature change, uncertainty and cost metrics are not available in this UI-only release.</div>')
+        card("Design drawing · next increment", '<div class="cf-muted-block">Intervention drawing and GIS import are not enabled yet.</div>')
+        card("Scientific status", '<div class="cf-muted-block">No cooling effect or cost predictions are generated.</div>')
 
 with t3:
     st.write("")
     html('<div class="cf-subheading">Compare Options</div><div class="cf-intro">Review a consistent existing-versus-design comparison, followed by evaluation metrics and reporting controls.</div>')
-    html('<div class="cf-viewbar"><span class="cf-view cf-view-active">Existing site</span><span class="cf-view">Option A · Green courtyard</span><span class="cf-view">Option B · Cool surfaces</span></div>')
+    _comparison_names = [html_std.escape(item["name"]) for item in st.session_state.get("design_options", [])]
+    html('<div class="cf-viewbar"><span class="cf-view cf-view-active">Existing site</span>' +
+         ''.join(f'<span class="cf-view">{name}</span>' for name in _comparison_names) + '</div>')
     card("Project site · shared across all tabs", boundary_preview_svg(st.session_state.get("boundary_info")) +
          '<div class="cf-caption">The same active site boundary is retained here. '
          'Scenario diagrams below are conceptual placeholders, not maps of this geometry.</div>')
     p1,p2,p3=st.columns(3,gap="medium")
     with p1: card("Existing Site · Baseline",site_illustration("base")+'<div class="cf-caption">Conceptual reference — no observed thermal raster</div>')
-    with p2: card("Option A · Green courtyard",site_illustration("green")+'<div class="cf-caption">Illustrative vegetation intervention</div>')
-    with p3: card("Option B · Cool surfaces",site_illustration("cool")+'<div class="cf-caption">Illustrative material intervention</div>')
+    with p2: card("Illustrative green design",site_illustration("green")+'<div class="cf-caption">Conceptual only; not a managed option or computed result</div>')
+    with p3: card("Illustrative cool-surface design",site_illustration("cool")+'<div class="cf-caption">Conceptual only; not a managed option or computed result</div>')
     html('<div class="cf-quiet">All three plans are schematic. They are not georeferenced site maps, thermal predictions, or comparative environmental findings.</div>')
     html('<div class="cf-section-head"><div class="cf-subheading">Comparative indicators</div><div class="cf-caption">Final values will only be displayed when the scientific engine is connected and validated.</div></div>')
     c1,c2,c3,c4=st.columns(4)
@@ -730,4 +810,4 @@ with t3:
         card("Reports and exports · planned",'<div class="cf-outputrow"><span class="cf-action">PDF report</span><span class="cf-action">PNG comparison</span><span class="cf-action">CSV results</span><span class="cf-action">Method note</span></div><div class="cf-divider"></div><div class="cf-caption">All export controls are visual placeholders.</div>')
         card("Scientific interpretation",'<div class="cf-caption">Future reports will distinguish observed satellite inputs, modelled temperature patterns, predicted intervention effects and associated uncertainty.</div>')
 
-html('<div class="cf-footer">ClimaForma v2.4.18 · Increment 4E · Observed Landsat LST and Sentinel-2 indices; cooling predictions disabled · Not suitable for environmental, engineering or investment decisions</div>')
+html('<div class="cf-footer">ClimaForma v2.4.19 · Increment 5A · Observed Landsat LST and Sentinel-2 indices; cooling predictions disabled · Not suitable for environmental, engineering or investment decisions</div>')
