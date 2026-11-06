@@ -1,4 +1,4 @@
-"""ClimaForma v2.4.22 — Barcelona MVP · Increment 5C editor usability fix.
+"""ClimaForma v2.4.23 — Barcelona MVP · Increment 5C polygon vertex editor fix.
 
 Site mapping, showcase boundaries, vector context and address navigation remain.
 Thermal pixel quality assessment is enabled; temperature modelling is disabled.
@@ -29,29 +29,59 @@ from buffer_geometry import (create_analysis_buffer, BUFFER_MIN_M, BUFFER_MAX_M,
                              BUFFER_DEFAULT_M, BUFFER_STEP_M)
 
 class AutoActivateDesignEditor(MacroElement):
-    """Open the Leaflet Draw edit mode for an already-saved design geometry.
+    """Open the Leaflet.draw edit handler and polygon vertex handles reliably.
 
-    The existing marker/polygon is added to the Draw feature group first.
-    Clicking Leaflet's own edit button (rather than creating a separate editor)
-    keeps vertex handles and the native Save/Cancel toolbar functional.
+    Folium creates Draw control and FeatureGroup in the map script. Activate the
+    actual edit handler after those objects exist, rather than clicking toolbar
+    buttons at a fixed delay. The active geometry remains managed by Draw so
+    the native Save/Cancel lifecycle and Streamlit's all_drawings stay intact.
     """
     _template = Template("""
     {% macro script(this, kwargs) %}
-    {{ this._parent.get_name() }}.whenReady(function () {
-        window.setTimeout(function () {
-            var mapContainer = {{ this._parent.get_name() }}.getContainer();
-            var editButton = mapContainer.querySelector('.leaflet-draw-edit-edit');
-            if (editButton && !editButton.classList.contains('leaflet-disabled')) {
-                editButton.click();
+    (function () {
+        var map = {{ this._parent.get_name() }};
+        var group = {{ this.feature_group_name }};
+        var drawControl = {{ this.draw_control_name }};
+        var tries = 0;
+        function activate() {
+            tries += 1;
+            var editableLayer = null;
+            group.eachLayer(function (layer) { if (!editableLayer) editableLayer = layer; });
+            if (!editableLayer || !map || !drawControl) {
+                if (tries < 30) window.setTimeout(activate, 100);
+                return;
             }
-        }, 250);
-    });
+            try {
+                // Leaflet.draw's actual edit toolbar handler enables vertex
+                // markers on L.Polygon and retains its Save/Cancel lifecycle.
+                var editToolbar = drawControl._toolbars && drawControl._toolbars.edit;
+                var editMode = editToolbar && editToolbar._modes && editToolbar._modes.edit;
+                var handler = editMode && editMode.handler;
+                if (handler && !handler.enabled()) handler.enable();
+
+                // Explicit fallback: relevant for leaflet.draw load-order or
+                // theme issues where the handler does not expose vertices.
+                if (editableLayer instanceof L.Polygon &&
+                    editableLayer.editing && !editableLayer.editing.enabled()) {
+                    editableLayer.editing.enable();
+                }
+                if (editableLayer instanceof L.Marker && editableLayer.dragging &&
+                    !editableLayer.dragging.enabled()) editableLayer.dragging.enable();
+            } catch (err) {
+                console.warn('ClimaForma geometry edit activation:', err);
+                if (tries < 30) window.setTimeout(activate, 100);
+            }
+        }
+        map.whenReady(function () { window.setTimeout(activate, 60); });
+    })();
     {% endmacro %}
     """)
 
-    def __init__(self):
+    def __init__(self, feature_group, draw_control):
         super().__init__()
         self._name = "AutoActivateDesignEditor"
+        self.feature_group_name = feature_group.get_name()
+        self.draw_control_name = draw_control.get_name()
 
 
 st.set_page_config(
@@ -901,15 +931,16 @@ with t2:
                     locations = [[(float(pt[1]), float(pt[0])) for pt in ring] for ring in rings]
                     folium.Polygon(locations=locations[0] if len(locations) == 1 else locations,
                                    color=edit_color, weight=3, fill=True, fill_opacity=0.35).add_to(draw_group)
-            Draw(feature_group=draw_group, position="topleft", export=False,
+            design_draw_control = Draw(feature_group=draw_group, position="topleft", export=False,
                  show_geometry_on_click=False,
                  draw_options={"polyline":False, "circle":False,"circlemarker":False,
                                "marker":expected_draw == "point" if editing_entry is None else False,
                                "polygon":{"allowIntersection":False} if expected_draw == "polygon" and editing_entry is None else False,
                                "rectangle":expected_draw == "polygon" if editing_entry is None else False},
-                 edit_options={"edit":True,"remove":editing_entry is None}).add_to(design_map)
+                 edit_options={"edit":True,"remove":editing_entry is None})
+            design_draw_control.add_to(design_map)
             if editing_entry is not None:
-                AutoActivateDesignEditor().add_to(design_map)
+                AutoActivateDesignEditor(draw_group, design_draw_control).add_to(design_map)
             folium.LayerControl(collapsed=True).add_to(design_map)
             map_key = (f'design_map_{selected_id}_{chosen_kind}_'
                        f'{st.session_state.get("design_map_generation",0)}')
@@ -918,7 +949,7 @@ with t2:
                                      returned_objects=["all_drawings"])
             pending_drawings = drawn_response.get("all_drawings") if isinstance(drawn_response, dict) else None
             if editing_entry is not None:
-                st.info("Edit mode opens automatically. Drag the tree marker or polygon vertex handles, click the map toolbar Save button, then click Apply edited geometry below. If handles are not visible, click the pencil icon once.")
+                st.info("Editing activates automatically. Drag polygon vertex handles (or the tree marker), click the map toolbar Save button, then click Apply edited geometry. If handles are not visible, click the pencil icon to enable editing manually.")
                 apply_col, cancel_col = st.columns(2)
                 with apply_col:
                     if st.button("Apply edited geometry", key="apply_intervention_edit"):
