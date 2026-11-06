@@ -1,4 +1,4 @@
-"""ClimaForma v2.4.21 — Barcelona MVP · Increment 5C: spatial intervention drawing.
+"""ClimaForma v2.4.22 — Barcelona MVP · Increment 5C editor usability fix.
 
 Site mapping, showcase boundaries, vector context and address navigation remain.
 Thermal pixel quality assessment is enabled; temperature modelling is disabled.
@@ -9,6 +9,8 @@ import html as html_std
 import streamlit as st
 import folium
 from folium.plugins import Draw, Fullscreen, MousePosition
+from branca.element import MacroElement
+from jinja2 import Template
 from streamlit_folium import st_folium
 from site_mapping import (BoundaryInfo, SHOWCASE_CENTERS, DEFAULT_CENTER,
                           boundary_from_drawings, same_boundary, boundary_preview_svg)
@@ -25,6 +27,32 @@ from landsat_temperature import assess_temperature_candidate
 from sentinel2_analysis import discover_sentinel, assess_sentinel
 from buffer_geometry import (create_analysis_buffer, BUFFER_MIN_M, BUFFER_MAX_M,
                              BUFFER_DEFAULT_M, BUFFER_STEP_M)
+
+class AutoActivateDesignEditor(MacroElement):
+    """Open the Leaflet Draw edit mode for an already-saved design geometry.
+
+    The existing marker/polygon is added to the Draw feature group first.
+    Clicking Leaflet's own edit button (rather than creating a separate editor)
+    keeps vertex handles and the native Save/Cancel toolbar functional.
+    """
+    _template = Template("""
+    {% macro script(this, kwargs) %}
+    {{ this._parent.get_name() }}.whenReady(function () {
+        window.setTimeout(function () {
+            var mapContainer = {{ this._parent.get_name() }}.getContainer();
+            var editButton = mapContainer.querySelector('.leaflet-draw-edit-edit');
+            if (editButton && !editButton.classList.contains('leaflet-disabled')) {
+                editButton.click();
+            }
+        }, 250);
+    });
+    {% endmacro %}
+    """)
+
+    def __init__(self):
+        super().__init__()
+        self._name = "AutoActivateDesignEditor"
+
 
 st.set_page_config(
     page_title="ClimaForma | Climate-Responsive Design",
@@ -867,18 +895,21 @@ with t2:
                 edit_color = INTERVENTION_COLORS[editing_entry["type"]]
                 if editing_entry["tree_count"]:
                     lon, lat = editable_geom["coordinates"][:2]
-                    folium.Marker([lat, lon], tooltip="Drag this tree marker, then click Save on toolbar").add_to(draw_group)
+                    folium.Marker([lat, lon], draggable=True, tooltip="Drag the tree marker to its new position").add_to(draw_group)
                 else:
                     rings = editable_geom["coordinates"]
                     locations = [[(float(pt[1]), float(pt[0])) for pt in ring] for ring in rings]
                     folium.Polygon(locations=locations[0] if len(locations) == 1 else locations,
                                    color=edit_color, weight=3, fill=True, fill_opacity=0.35).add_to(draw_group)
             Draw(feature_group=draw_group, position="topleft", export=False,
+                 show_geometry_on_click=False,
                  draw_options={"polyline":False, "circle":False,"circlemarker":False,
                                "marker":expected_draw == "point" if editing_entry is None else False,
                                "polygon":{"allowIntersection":False} if expected_draw == "polygon" and editing_entry is None else False,
                                "rectangle":expected_draw == "polygon" if editing_entry is None else False},
                  edit_options={"edit":True,"remove":editing_entry is None}).add_to(design_map)
+            if editing_entry is not None:
+                AutoActivateDesignEditor().add_to(design_map)
             folium.LayerControl(collapsed=True).add_to(design_map)
             map_key = (f'design_map_{selected_id}_{chosen_kind}_'
                        f'{st.session_state.get("design_map_generation",0)}')
@@ -887,7 +918,7 @@ with t2:
                                      returned_objects=["all_drawings"])
             pending_drawings = drawn_response.get("all_drawings") if isinstance(drawn_response, dict) else None
             if editing_entry is not None:
-                st.info("Editing saved intervention. Use the toolbar pencil, drag vertices or marker, then click the toolbar Save button. Finally click Apply edited geometry below.")
+                st.info("Edit mode opens automatically. Drag the tree marker or polygon vertex handles, click the map toolbar Save button, then click Apply edited geometry below. If handles are not visible, click the pencil icon once.")
                 apply_col, cancel_col = st.columns(2)
                 with apply_col:
                     if st.button("Apply edited geometry", key="apply_intervention_edit"):
