@@ -8,7 +8,8 @@ from copy import deepcopy
 from uuid import uuid4
 import math
 
-from shapely.geometry import shape, mapping, Polygon, Point
+from shapely.geometry import shape, mapping, Polygon, MultiPolygon, Point
+from shapely.ops import unary_union
 from pyproj import Geod
 
 GEOD = Geod(ellps="WGS84")
@@ -104,11 +105,61 @@ def remove_intervention(options: list[dict], option_id: str, intervention_id: st
 
 
 def summarize_interventions(interventions: list[dict]) -> dict:
-    """Additive geometric quantities; overlapping areas are NOT unioned."""
+    """Geometric quantities, including exclusive-surface union and overlaps."""
+    exclusive_geoms = [shape(x["geometry"]) for x in interventions
+                       if x["type"] in EXCLUSIVE_SURFACE_TYPES]
+    union = unary_union(exclusive_geoms) if exclusive_geoms else None
+    union_m2 = abs(GEOD.geometry_area_perimeter(union)[0]) if union is not None else 0.0
     return {
+        "exclusive_surface_union_m2": round(union_m2, 2),
         "count": len(interventions),
         "trees": sum(x["tree_count"] for x in interventions),
         "total_polygon_m2": round(sum(x["area_m2"] for x in interventions), 2),
         "areas_by_type": {key: round(sum(x["area_m2"] for x in interventions if x["type"] == key), 2)
                           for key, geom_type in INTERVENTION_TYPES.items() if geom_type == "polygon"},
     }
+
+
+# These are mutually exclusive proposed *ground-surface treatments*. Shade
+# structures are overhead and trees are points, so may overlap ground treatments.
+EXCLUSIVE_SURFACE_TYPES = frozenset({
+    "Grass / planting", "Cool paving", "Permeable paving", "Water feature"
+})
+
+def find_surface_conflicts(interventions: list[dict], *, modified_id: str | None = None) -> list[tuple[str, str]]:
+    """Return conflicting ID pairs; shared boundaries alone are not conflicts."""
+    polygons = [(x["id"], shape(x["geometry"])) for x in interventions
+                if x["type"] in EXCLUSIVE_SURFACE_TYPES]
+    conflicts = []
+    for idx, (left_id, left) in enumerate(polygons):
+        for right_id, right in polygons[idx+1:]:
+            if modified_id is not None and modified_id not in (left_id, right_id):
+                continue
+            if left.intersects(right) and left.intersection(right).area > 1e-14:
+                conflicts.append((left_id, right_id))
+    return conflicts
+
+def replace_intervention(options: list[dict], option_id: str, intervention_id: str,
+                         drawing: dict, site_geometry: dict) -> list[dict]:
+    """Validate edited geometry; retain ID, type and other options unchanged."""
+    output = deepcopy(options)
+    for option in output:
+        if option["id"] != option_id:
+            continue
+        for index, old in enumerate(option["interventions"]):
+            if old["id"] == intervention_id:
+                updated = make_intervention(drawing, old["type"], site_geometry, identifier=intervention_id)
+                option["interventions"][index] = updated
+                if find_surface_conflicts(option["interventions"], modified_id=intervention_id):
+                    raise ValueError("Edited surface overlaps another incompatible ground treatment.")
+                return output
+        raise ValueError("Selected intervention was not found.")
+    raise ValueError("Active design option was not found.")
+
+def append_intervention_checked(options: list[dict], option_id: str, intervention: dict) -> list[dict]:
+    """Append only if new exclusive ground-surface treatments do not overlap."""
+    output = append_intervention(options, option_id, intervention)
+    option = next(x for x in output if x["id"] == option_id)
+    if find_surface_conflicts(option["interventions"], modified_id=intervention["id"]):
+        raise ValueError("This ground-surface treatment overlaps an existing incompatible surface treatment.")
+    return output

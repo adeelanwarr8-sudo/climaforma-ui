@@ -1,4 +1,4 @@
-"""ClimaForma v2.4.20 — Barcelona MVP · Increment 5B: spatial intervention drawing.
+"""ClimaForma v2.4.21 — Barcelona MVP · Increment 5C: spatial intervention drawing.
 
 Site mapping, showcase boundaries, vector context and address navigation remain.
 Thermal pixel quality assessment is enabled; temperature modelling is disabled.
@@ -15,8 +15,8 @@ from site_mapping import (BoundaryInfo, SHOWCASE_CENTERS, DEFAULT_CENTER,
 from geo_data import fetch_osm_buildings, process_geojson_bytes
 from design_options import add_option, rename_option, duplicate_option, delete_option, new_option, MAX_OPTIONS
 from interventions import (INTERVENTION_TYPES, INTERVENTION_COLORS, MAX_INTERVENTIONS,
-                           make_intervention, append_intervention, remove_intervention,
-                           summarize_interventions)
+                           make_intervention, append_intervention_checked, remove_intervention,
+                           replace_intervention, find_surface_conflicts, summarize_interventions)
 from address_lookup import search_addresses
 from showcase_sites import showcase_boundary, SHOWCASE_FILES
 from satellite_discovery import discover_landsat
@@ -686,6 +686,7 @@ if st.session_state.get("design_site_signature") != _design_site_signature:
     st.session_state["design_site_signature"] = _design_site_signature
     st.session_state["design_options"] = ([new_option("Option A · Untitled design")]
                                           if _design_site_signature is not None else [])
+    st.session_state.pop("editing_intervention_id", None)
     st.session_state.pop("pending_design_delete", None)
     st.session_state.pop("design_option_selector", None)
     st.session_state["selected_design_id"] = (st.session_state["design_options"][0]["id"]
@@ -703,6 +704,9 @@ with t2:
         if selected_id not in option_ids:
             selected_id = option_ids[0] if option_ids else None
             st.session_state["selected_design_id"] = selected_id
+        if st.session_state.get("edit_option_owner") != selected_id:
+            st.session_state.pop("editing_intervention_id", None)
+            st.session_state["edit_option_owner"] = selected_id
         if options:
             selected_id = st.selectbox(
                 "Active design option", options=option_ids,
@@ -710,6 +714,9 @@ with t2:
                 format_func=lambda oid: next(x["name"] for x in options if x["id"] == oid),
                 key="design_option_selector",
             )
+            if st.session_state.get("edit_option_owner") != selected_id:
+                st.session_state.pop("editing_intervention_id", None)
+                st.session_state["edit_option_owner"] = selected_id
             st.session_state["selected_design_id"] = selected_id
             active_option = next(x for x in options if x["id"] == selected_id)
         else:
@@ -771,7 +778,7 @@ with t2:
         st.caption(f"{len(options)} of {MAX_OPTIONS} design options · Stored in this Streamlit session only · Intervention drawing available")
     left, right = st.columns([1.02, 1.58], gap="large")
     with left:
-        html('<div class="cf-eyebrow">Increment 5B · Spatial interventions</div>')
+        html('<div class="cf-eyebrow">Increment 5C · Spatial interventions</div>')
         st.caption("Select the active design option, choose the intervention type, then draw one geometry at a time on the design map. Interventions must remain entirely within the site.")
         chosen_kind = st.selectbox("Intervention type", list(INTERVENTION_TYPES), key="design_intervention_kind")
         expected_draw = INTERVENTION_TYPES[chosen_kind]
@@ -782,16 +789,34 @@ with t2:
             totals = summarize_interventions(proposed)
             st.metric("Proposed tree locations", totals["trees"])
             st.metric("Total drawn polygon area", f'{totals["total_polygon_m2"]:,.1f} m²')
-            st.caption("Areas are summed across drawings; overlapping polygons may be counted twice. No assumed canopy footprint or cooling benefit.")
+            st.metric("Unique ground-treatment area", f'{totals["exclusive_surface_union_m2"]:,.1f} m²')
+            st.caption("Ground treatments are mutually exclusive. Shade structures may overlap surfaces; tree markers do not imply canopy area. No cooling benefit estimated.")
+            st.caption("Ground-treatment areas by type: " + " · ".join(
+                f'{name}: {value:,.1f} m²' for name, value in totals["areas_by_type"].items() if value > 0) if any(totals["areas_by_type"].values()) else "No ground-surface polygons yet.")
+            old_conflicts = find_surface_conflicts(proposed)
+            if old_conflicts:
+                st.warning(f"{len(old_conflicts)} pre-existing incompatible ground-surface overlaps detected. Edit or remove them before adding new overlapping treatments.")
             st.write(f'**{totals["count"]} interventions** in this option (maximum {MAX_INTERVENTIONS}).')
+            editing_id = st.session_state.get("editing_intervention_id")
+            if editing_id and not any(x["id"] == editing_id for x in proposed):
+                st.session_state.pop("editing_intervention_id", None)
+                editing_id = None
             for entry in proposed:
                 label = (f'{entry["type"]} · point' if entry["tree_count"] else
                          f'{entry["type"]} · {entry["area_m2"]:,.1f} m²')
-                a, b = st.columns([3.2, 1])
+                a, b, c = st.columns([2.8, 1, 1])
                 with a:
                     st.caption(label)
                 with b:
+                    if st.button("Edit", key=f'edit_intervention_{selected_id}_{entry["id"]}',
+                                 disabled=bool(editing_id and editing_id != entry["id"])):
+                        st.session_state["editing_intervention_id"] = entry["id"]
+                        st.session_state["design_map_generation"] = st.session_state.get("design_map_generation",0) + 1
+                        st.rerun()
+                with c:
                     if st.button("Remove", key=f'remove_intervention_{selected_id}_{entry["id"]}'):
+                        if st.session_state.get("editing_intervention_id") == entry["id"]:
+                            st.session_state.pop("editing_intervention_id", None)
                         st.session_state["design_options"] = remove_intervention(
                             st.session_state["design_options"], selected_id, entry["id"])
                         st.session_state["design_map_generation"] = st.session_state.get("design_map_generation", 0) + 1
@@ -805,6 +830,11 @@ with t2:
         html(f'<div class="cf-quiet"><strong>Active option:</strong> {current_name} · Geometric design proposals only, no modeled cooling or cost.</div>')
         if _design_site_signature and active_option is not None:
             design_boundary = st.session_state["boundary_info"]
+            editing_id = st.session_state.get("editing_intervention_id")
+            editing_entry = next((x for x in active_option["interventions"] if x["id"] == editing_id), None)
+            if editing_id and editing_entry is None:
+                st.session_state.pop("editing_intervention_id", None)
+                editing_id = None
             # The intervention Draw group is separate from the Existing Site map's
             # editable site-boundary group. Existing designs are read-only on this
             # map and can be individually removed using the list at left.
@@ -817,6 +847,8 @@ with t2:
             folium.GeoJson(design_boundary.geometry, name="Project site boundary",
                 style_function=lambda _: {"color":"#087c6e","weight":3,"fillOpacity":0.04}).add_to(design_map)
             for entry in active_option["interventions"]:
+                if entry["id"] == editing_id:
+                    continue
                 color = INTERVENTION_COLORS[entry["type"]]
                 geometry = entry["geometry"]
                 if entry["tree_count"]:
@@ -828,14 +860,25 @@ with t2:
                                    style_function=lambda _, color=color: {
                                        "color":color, "weight":2, "fillColor":color, "fillOpacity":0.35},
                                    tooltip=entry["type"]).add_to(design_map)
-            draw_group = folium.FeatureGroup(name="New intervention drawing")
+            draw_group = folium.FeatureGroup(name="Editable intervention" if editing_entry else "New intervention drawing")
             draw_group.add_to(design_map)
+            if editing_entry is not None:
+                editable_geom = editing_entry["geometry"]
+                edit_color = INTERVENTION_COLORS[editing_entry["type"]]
+                if editing_entry["tree_count"]:
+                    lon, lat = editable_geom["coordinates"][:2]
+                    folium.Marker([lat, lon], tooltip="Drag this tree marker, then click Save on toolbar").add_to(draw_group)
+                else:
+                    rings = editable_geom["coordinates"]
+                    locations = [[(float(pt[1]), float(pt[0])) for pt in ring] for ring in rings]
+                    folium.Polygon(locations=locations[0] if len(locations) == 1 else locations,
+                                   color=edit_color, weight=3, fill=True, fill_opacity=0.35).add_to(draw_group)
             Draw(feature_group=draw_group, position="topleft", export=False,
                  draw_options={"polyline":False, "circle":False,"circlemarker":False,
-                               "marker":expected_draw == "point",
-                               "polygon":{"allowIntersection":False} if expected_draw == "polygon" else False,
-                               "rectangle":expected_draw == "polygon"},
-                 edit_options={"edit":True,"remove":True}).add_to(design_map)
+                               "marker":expected_draw == "point" if editing_entry is None else False,
+                               "polygon":{"allowIntersection":False} if expected_draw == "polygon" and editing_entry is None else False,
+                               "rectangle":expected_draw == "polygon" if editing_entry is None else False},
+                 edit_options={"edit":True,"remove":editing_entry is None}).add_to(design_map)
             folium.LayerControl(collapsed=True).add_to(design_map)
             map_key = (f'design_map_{selected_id}_{chosen_kind}_'
                        f'{st.session_state.get("design_map_generation",0)}')
@@ -843,23 +886,43 @@ with t2:
                                      use_container_width=True, key=map_key,
                                      returned_objects=["all_drawings"])
             pending_drawings = drawn_response.get("all_drawings") if isinstance(drawn_response, dict) else None
-            if pending_drawings:
+            if editing_entry is not None:
+                st.info("Editing saved intervention. Use the toolbar pencil, drag vertices or marker, then click the toolbar Save button. Finally click Apply edited geometry below.")
+                apply_col, cancel_col = st.columns(2)
+                with apply_col:
+                    if st.button("Apply edited geometry", key="apply_intervention_edit"):
+                        if not isinstance(pending_drawings, list) or len(pending_drawings) != 1:
+                            st.warning("Exactly one edited shape must be present. Use the pencil and Save controls on the map first.")
+                        else:
+                            try:
+                                st.session_state["design_options"] = replace_intervention(
+                                    st.session_state["design_options"], selected_id, editing_id,
+                                    pending_drawings[0], design_boundary.geometry)
+                                st.session_state.pop("editing_intervention_id", None)
+                                st.session_state["design_map_generation"] = st.session_state.get("design_map_generation",0) + 1
+                                st.rerun()
+                            except (ValueError, TypeError, KeyError) as exc:
+                                st.error(f"Edited geometry not accepted: {exc}")
+                with cancel_col:
+                    if st.button("Cancel geometry edit", key="cancel_intervention_edit"):
+                        st.session_state.pop("editing_intervention_id", None)
+                        st.session_state["design_map_generation"] = st.session_state.get("design_map_generation",0) + 1
+                        st.rerun()
+            elif pending_drawings:
                 if len(pending_drawings) > 1:
                     st.warning("Save one drawing at a time. Remove extra new shapes using the drawing toolbar.")
                 else:
                     try:
                         candidate = make_intervention(pending_drawings[0], chosen_kind,
                                                        design_boundary.geometry)
-                        st.session_state["design_options"] = append_intervention(
+                        st.session_state["design_options"] = append_intervention_checked(
                             st.session_state["design_options"], selected_id, candidate)
-                        # Force a fresh draw group after saving, so the new
-                        # shape is not captured a second time on a rerun.
                         st.session_state["design_map_generation"] = st.session_state.get("design_map_generation",0) + 1
                         st.rerun()
                     except (ValueError, TypeError, KeyError) as exc:
                         st.warning(f"Intervention not accepted: {exc}")
                         st.caption("Use the map edit/delete controls or remove the drawing and redraw it.")
-            st.caption("Saved intervention shapes are shown on the design map. To revise a saved shape, remove it from the list and redraw it. This does not modify the original site boundary.")
+            st.caption("Use Edit beside a saved intervention to change its geometry. Ground-surface treatments cannot overlap one another; shade and trees may overlap them. The original site boundary is unchanged.")
         else:
             st.info("Define a site in Existing Site and create an option to activate the design map.")
         card("Scientific status", '<div class="cf-muted-block">Intervention geometry and quantities only. Cooling predictions and costs remain disabled.</div>')
@@ -891,4 +954,4 @@ with t3:
         card("Reports and exports · planned",'<div class="cf-outputrow"><span class="cf-action">PDF report</span><span class="cf-action">PNG comparison</span><span class="cf-action">CSV results</span><span class="cf-action">Method note</span></div><div class="cf-divider"></div><div class="cf-caption">All export controls are visual placeholders.</div>')
         card("Scientific interpretation",'<div class="cf-caption">Future reports will distinguish observed satellite inputs, modelled temperature patterns, predicted intervention effects and associated uncertainty.</div>')
 
-html('<div class="cf-footer">ClimaForma v2.4.20 · Increment 5B · Observed Landsat LST and Sentinel-2 indices; cooling predictions disabled · Not suitable for environmental, engineering or investment decisions</div>')
+html('<div class="cf-footer">ClimaForma v2.4.21 · Increment 5C · Observed Landsat LST and Sentinel-2 indices; cooling predictions disabled · Not suitable for environmental, engineering or investment decisions</div>')
