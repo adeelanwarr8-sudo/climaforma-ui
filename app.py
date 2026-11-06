@@ -1,4 +1,4 @@
-"""ClimaForma v2.4.23 — Barcelona MVP · Increment 5C polygon vertex editor fix.
+"""ClimaForma v2.4.24 — Barcelona MVP · Increment 6A scenario quantification.
 
 Site mapping, showcase boundaries, vector context and address navigation remain.
 Thermal pixel quality assessment is enabled; temperature modelling is disabled.
@@ -19,6 +19,7 @@ from design_options import add_option, rename_option, duplicate_option, delete_o
 from interventions import (INTERVENTION_TYPES, INTERVENTION_COLORS, MAX_INTERVENTIONS,
                            make_intervention, append_intervention_checked, remove_intervention,
                            replace_intervention, find_surface_conflicts, summarize_interventions)
+from scenario_quantification import quantify_options, comparison_rows, comparison_csv
 from address_lookup import search_addresses
 from showcase_sites import showcase_boundary, SHOWCASE_FILES
 from satellite_discovery import discover_landsat
@@ -219,7 +220,7 @@ def selected_site_summary(mode: str, showcase: str, address: str) -> tuple[str, 
 
 with st.sidebar:
     html('<div class="cf-brand">◈ ClimaForma</div><div class="cf-brandline">Climate-responsive design intelligence</div>')
-    html('<span class="cf-pill">V2.4.20 · INCREMENT 5B</span>')
+    html('<span class="cf-pill">V2.4.24 · INCREMENT 6A</span>')
     st.divider()
     html('<div class="cf-step">01 · Project information</div>')
     st.text_input("Project name", value="Untitled climate design study", key="project_name", max_chars=100,
@@ -281,8 +282,8 @@ with st.sidebar:
     st.caption("0 m = site only · 100 m default · 300 m maximum. Not a predicted cooling distance.")
     st.divider()
     html('<div class="cf-step">04 · Application status</div>')
-    html('<div class="cf-quiet"><strong>Increment 5B active</strong><div class="cf-caption">Landsat thermal QA and Sentinel-2 optical indices are available. Integrated observed LST and Sentinel-2 index maps are available after QA; predictions remain disabled.</div></div>')
-    st.caption("ClimaForma v2.4.20 · Barcelona showcase · Landsat QA + Sentinel-2 optical indices")
+    html('<div class="cf-quiet"><strong>Increment 6A active</strong><div class="cf-caption">Landsat thermal QA and Sentinel-2 optical indices are available. Integrated observed LST and Sentinel-2 index maps are available after QA; predictions remain disabled.</div></div>')
+    st.caption("ClimaForma v2.4.24 · Barcelona showcase · Landsat QA + Sentinel-2 optical indices")
 
 # Preserve the geocoded location when moving between Address lookup and
 # Draw site boundary. Both modes refer to the same user-selected location.
@@ -1001,29 +1002,58 @@ with t2:
 
 with t3:
     st.write("")
-    html('<div class="cf-subheading">Compare Options</div><div class="cf-intro">Review a consistent existing-versus-design comparison, followed by evaluation metrics and reporting controls.</div>')
-    _comparison_names = [html_std.escape(item["name"]) for item in st.session_state.get("design_options", [])]
-    html('<div class="cf-viewbar"><span class="cf-view cf-view-active">Existing site</span>' +
-         ''.join(f'<span class="cf-view">{name}</span>' for name in _comparison_names) + '</div>')
-    card("Project site · shared across all tabs", boundary_preview_svg(st.session_state.get("boundary_info")) +
-         '<div class="cf-caption">The same active site boundary is retained here. '
-         'Scenario diagrams below are conceptual placeholders, not maps of this geometry.</div>')
-    p1,p2,p3=st.columns(3,gap="medium")
-    with p1: card("Existing Site · Baseline",site_illustration("base")+'<div class="cf-caption">Conceptual reference — no observed thermal raster</div>')
-    with p2: card("Illustrative green design",site_illustration("green")+'<div class="cf-caption">Conceptual only; not a managed option or computed result</div>')
-    with p3: card("Illustrative cool-surface design",site_illustration("cool")+'<div class="cf-caption">Conceptual only; not a managed option or computed result</div>')
-    html('<div class="cf-quiet">All three plans are schematic. They are not georeferenced site maps, thermal predictions, or comparative environmental findings.</div>')
-    html('<div class="cf-section-head"><div class="cf-subheading">Comparative indicators</div><div class="cf-caption">Final values will only be displayed when the scientific engine is connected and validated.</div></div>')
-    c1,c2,c3,c4=st.columns(4)
-    with c1: metric("Mean temperature change")
-    with c2: metric("Hot-area reduction")
-    with c3: metric("Area improved")
-    with c4: metric("Indicative cost")
-    wider,smaller=st.columns([1.7,1],gap="large")
-    with wider:
-        card("Scenario performance · chart area",'<div class="cf-muted-block" style="min-height:200px"><strong>Comparison chart placeholder</strong><span>Existing baseline versus selected design alternatives</span><span>No numerical values generated</span></div>')
-    with smaller:
-        card("Reports and exports · planned",'<div class="cf-outputrow"><span class="cf-action">PDF report</span><span class="cf-action">PNG comparison</span><span class="cf-action">CSV results</span><span class="cf-action">Method note</span></div><div class="cf-divider"></div><div class="cf-caption">All export controls are visual placeholders.</div>')
-        card("Scientific interpretation",'<div class="cf-caption">Future reports will distinguish observed satellite inputs, modelled temperature patterns, predicted intervention effects and associated uncertainty.</div>')
+    html('<div class="cf-subheading">Compare Options · Geometric Scenario Quantification</div>'
+         '<div class="cf-intro">Compare measured design proposals against the shared project-site area. '
+         'These are intervention quantities, not existing land-cover estimates or predicted cooling outcomes.</div>')
+    comparison_boundary = st.session_state.get("boundary_info")
+    comparison_options = st.session_state.get("design_options", [])
+    if comparison_boundary is None:
+        st.info("Define a project boundary in Existing Site to quantify design scenarios.")
+    elif not comparison_options:
+        st.info("Create a design option in Design Options to begin comparing scenarios.")
+    else:
+        try:
+            quantified = quantify_options(comparison_options, comparison_boundary.geometry)
+            records = comparison_rows(quantified)
+        except (ValueError, TypeError, KeyError) as exc:
+            st.error(f"Could not quantify design scenarios: {exc}")
+        else:
+            st.caption(f"Shared project site: {quantified[0]['site_area_m2']:,.1f} m² · "
+                       f"{len(quantified)} design option(s) · Geodesic WGS84 measurements")
+            st.dataframe(records, hide_index=True, use_container_width=True)
+            st.download_button("Export scenario quantities · CSV", data=comparison_csv(records),
+                               file_name="ClimaForma_design_scenario_quantities.csv", mime="text/csv",
+                               key="download_scenario_quantities")
+            selected_comparison = st.selectbox(
+                "Inspect option composition", options=[item["option_id"] for item in quantified],
+                format_func=lambda opt_id: next(item["option_name"] for item in quantified if item["option_id"] == opt_id),
+                key="comparison_option_id")
+            view = next(item for item in quantified if item["option_id"] == selected_comparison)
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                st.metric("Ground-treatment coverage", f"{view['ground_coverage_pct']:.2f}%")
+            with c2:
+                st.metric("Ground treatment area", f"{view['ground_treatment_m2']:,.1f} m²")
+            with c3:
+                st.metric("Tree planting locations", view["tree_locations"])
+            with c4:
+                st.metric("Overhead shade footprint", f"{view['shade_footprint_m2']:,.1f} m²")
+            st.caption(f"Unassigned proposed ground treatment: {view['unassigned_ground_m2']:,.1f} m² "
+                       f"({view['unassigned_ground_pct']:.2f}% of site). This does NOT mean bare or untreated existing land.")
+            composition = [{"Intervention": name, "Proposed area (m²)": area}
+                           for name, area in view["areas_by_type_m2"].items() if area > 0]
+            if composition:
+                st.dataframe(composition, hide_index=True, use_container_width=True)
+            else:
+                st.caption("No polygon interventions have been assigned to this option.")
+            st.info("Ground treatments are exclusive, measured by polygon union. Shade structure footprint "
+                    "is reported separately because it can overlap ground treatments. Tree points have no "
+                    "assumed canopy area. Figures are geometric measurements, not environmental effects.")
+    html('<div class="cf-section-head"><div class="cf-subheading">Environmental comparison · Not yet modelled</div>'
+         '<div class="cf-caption">Existing-site observed LST, NDVI and NDBI are not intervention-response predictions. '
+         'Temperature change, hotspot reduction, thermal comfort and costs remain unavailable.</div></div>')
+    card("Scientific boundary", '<div class="cf-caption">Scenario quantities describe proposed locations and '
+         'surface footprints only. No baseline land-cover classification, energy balance, cooling model, '
+         'benefit attribution, or uncertainty estimate has been performed.</div>')
 
-html('<div class="cf-footer">ClimaForma v2.4.21 · Increment 5C · Observed Landsat LST and Sentinel-2 indices; cooling predictions disabled · Not suitable for environmental, engineering or investment decisions</div>')
+html('<div class="cf-footer">ClimaForma v2.4.24 · Increment 6A · Observed Landsat LST and Sentinel-2 indices; cooling predictions disabled · Not suitable for environmental, engineering or investment decisions</div>')
