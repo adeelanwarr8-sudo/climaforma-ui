@@ -28,6 +28,12 @@ from sentinel2_analysis import discover_sentinel, assess_sentinel
 from buffer_geometry import (create_analysis_buffer, BUFFER_MIN_M, BUFFER_MAX_M,
                              BUFFER_DEFAULT_M, BUFFER_STEP_M)
 
+# Style applied to a shape while its vertices are being edited. Passing this
+# as an object (instead of edit=True) is what makes Leaflet.draw create
+# the vertex handles for polygons and rectangles.
+EDIT_PATH_OPTIONS = {"maintainColor": True, "dashArray": "6, 6", "fillOpacity": 0.25}
+
+
 class AutoActivateDesignEditor(MacroElement):
     """Open the Leaflet.draw edit handler and polygon vertex handles reliably.
 
@@ -379,7 +385,10 @@ def build_site_map(center: tuple[float, float, int], boundary: BoundaryInfo | No
                       "marker": False,
                       "polygon": {"allowIntersection": False} if allow_new_boundary else False,
                       "rectangle": True if allow_new_boundary else False},
-        edit_options={"edit": True, "remove": True},
+        # Leaflet.draw needs an OBJECT here, not True. With True it never gets
+        # selectedPathOptions, so polygon vertex editing crashes with
+        # "Cannot read properties of undefined (reading 'className')".
+        edit_options={"edit": {"selectedPathOptions": EDIT_PATH_OPTIONS}, "remove": True},
     ).add_to(m)
     Fullscreen(position="topright").add_to(m)
     MousePosition(position="bottomleft", separator=" / ", prefix="Lat/Lon:", num_digits=5).add_to(m)
@@ -937,7 +946,8 @@ with t2:
                                "marker":expected_draw == "point" if editing_entry is None else False,
                                "polygon":{"allowIntersection":False} if expected_draw == "polygon" and editing_entry is None else False,
                                "rectangle":expected_draw == "polygon" if editing_entry is None else False},
-                 edit_options={"edit":True,"remove":editing_entry is None})
+                 edit_options={"edit":{"selectedPathOptions":EDIT_PATH_OPTIONS},
+                               "remove":editing_entry is None})
             design_draw_control.add_to(design_map)
             if editing_entry is not None:
                 AutoActivateDesignEditor(draw_group, design_draw_control).add_to(design_map)
